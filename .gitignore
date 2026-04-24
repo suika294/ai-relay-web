@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.umi/
+src/.umi/
+src/.umi-production/
+.env.local
+.DS_Store
+*.log

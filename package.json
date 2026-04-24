@@ -1,0 +1,29 @@
+{
+  "name": "ai-relay-web",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "max dev",
+    "build": "max build",
+    "start": "max start",
+    "lint": "max lint",
+    "postinstall": "max setup",
+    "preview": "max preview"
+  },
+  "dependencies": {
+    "@ant-design/charts": "^2.1.0",
+    "@ant-design/icons": "^5.3.0",
+    "@ant-design/pro-components": "^2.6.0",
+    "@lobehub/icons": "^5.5.4",
+    "@umijs/max": "^4.1.0",
+    "antd": "^5.13.0",
+    "dayjs": "^1.11.10",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.3.0"
+  }
+}
