@@ -106,3 +106,25 @@ export const systemApi = {
   currencies: () => request<API.Response<string[]>>('/api/v1/system/currencies'),
   models: () => request<API.Response<any[]>>('/api/v1/system/models'),
 };
+
+export const assetApi = {
+  list: (params: { page?: number; size?: number; module?: string }) =>
+    request<API.Response<{ list: API.Asset[]; total: number }>>('/api/v1/assets', {
+      params,
+    }),
+  upload: (file: File, extra?: { module?: string; purpose?: string }) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (extra?.module) fd.append('module', extra.module);
+    if (extra?.purpose) fd.append('purpose', extra.purpose);
+    return request<API.Response<API.Asset>>('/api/v1/assets', {
+      method: 'POST',
+      data: fd,
+      requestType: 'form',
+    });
+  },
+  detail: (id: number) =>
+    request<API.Response<{ asset: API.Asset; url: string }>>(`/api/v1/assets/${id}`),
+  remove: (id: number) =>
+    request<API.Response>(`/api/v1/assets/${id}`, { method: 'DELETE' }),
+};

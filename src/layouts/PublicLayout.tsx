@@ -11,6 +11,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
 
   const navItems = [
     { to: '/', label: '首页' },
+    { to: '/billing', label: '充值' },
     { to: '/docs', label: '文档' },
   ];
 

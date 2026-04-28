@@ -23,6 +23,7 @@ export default defineConfig({
     { path: '/landing-classic', component: './landing', layout: false },
     { path: '/pricing-classic', component: './pricing', layout: false },
     { path: '/docs', component: './docs', layout: false },
+    { path: '/billing', component: './billing/public-recharge', layout: false },
     { path: '/auth/login', component: './auth/login', layout: false },
     { path: '/auth/register', component: './auth/register', layout: false },
 
@@ -85,6 +86,13 @@ export default defineConfig({
       path: '/console/playground',
       component: './playground',
       icon: 'ExperimentOutlined',
+      wrappers: ['@/wrappers/auth'],
+    },
+    {
+      name: '我的素材',
+      path: '/console/assets',
+      component: './assets',
+      icon: 'FolderOutlined',
       wrappers: ['@/wrappers/auth'],
     },
     {

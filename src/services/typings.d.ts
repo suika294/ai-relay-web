@@ -162,4 +162,23 @@ declare namespace API {
     data?: MediaTaskOutput[];
     error?: { code?: string; message: string };
   }
+
+  // 我的素材
+  interface Asset {
+    id: number;
+    owner_type: string;
+    owner_id: number;
+    module: string;
+    source: string;
+    driver: string;
+    bucket: string;
+    object_key: string;
+    content_type?: string;
+    size_bytes: number;
+    etag?: string;
+    filename?: string;
+    public_url?: string;
+    purpose?: string;
+    created_at: string;
+  }
 }
