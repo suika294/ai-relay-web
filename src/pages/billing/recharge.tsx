@@ -112,11 +112,12 @@ export default function Recharge() {
         <ProFormRadio.Group
           name="method"
           label="支付方式"
+          // Stripe 后端尚未实现(internal/pkg/payment/stripe.go 直接 not implemented),
+          // UI 暂不暴露,避免用户选了 Stripe 走到 502。后端补齐后再加回选项。
           options={[
             { value: 'manual', label: 'Manual（手动确认）' },
             { value: 'alipay', label: '支付宝' },
             { value: 'wechat', label: '微信' },
-            { value: 'stripe', label: 'Stripe' },
           ]}
           rules={[{ required: true }]}
         />

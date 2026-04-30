@@ -100,7 +100,7 @@ export default function Landing() {
           {`curl -N http://localhost:8080/v1/chat/completions \\
   -H "Authorization: Bearer sk-your-key" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}'`}
+  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"hi"}],"stream":true}'`}
         </Paragraph>
       </section>
 

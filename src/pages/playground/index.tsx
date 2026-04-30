@@ -148,7 +148,9 @@ function ChatPanel() {
           label: m.display_name ? `${m.display_name}` : m.name,
         }));
       setModels(list);
-      if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
+      if (list.length > 0) {
+        setModelName((prev) => (prev && list.some((m) => m.value === prev) ? prev : list[0].value));
+      }
     });
     tokenApi.list().then((res) => {
       const list = (res.data as API.Token[]) || [];
@@ -338,7 +340,9 @@ function ChatPanel() {
 
       if (stream) {
         // 流式：SSE 分片到达时直接刷新占位气泡内容，自带打字节奏
-        await consumeStream(res, (full) => replaceLastAssistant(full, sentWith));
+        await consumeStream(res, (full, modelAt) =>
+          replaceLastAssistant(full, modelAt || sentWith),
+        );
       } else {
         // 非流式：上游一次返回全量，本地做打字机效果，避免大段内容瞬间糊脸
         const data = await res.json();
@@ -668,7 +672,10 @@ export default function Playground() {
   );
 }
 
-async function consumeStream(res: Response, onChunk: (full: string) => void): Promise<void> {
+async function consumeStream(
+  res: Response,
+  onChunk: (full: string, modelAt?: string) => void,
+): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error('no body');
   const decoder = new TextDecoder();
@@ -696,7 +703,7 @@ async function consumeStream(res: Response, onChunk: (full: string) => void): Pr
         const delta = obj?.choices?.[0]?.delta?.content;
         if (typeof delta === 'string' && delta) {
           full += delta;
-          onChunk(full);
+          onChunk(full, typeof obj?.model === 'string' ? obj.model : undefined);
         }
       } catch (e) {
         if (e instanceof Error && !e.message.includes('JSON')) throw e;

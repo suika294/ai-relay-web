@@ -24,7 +24,7 @@ export default function Docs() {
   -H "Authorization: Bearer sk-your-key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-4o-mini",
+    "model": "gpt-5.3-codex",
     "messages": [{"role":"user","content":"你好"}],
     "stream": true
   }'`}</pre>
@@ -40,7 +40,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model="gpt-5.3-codex",
     messages=[{"role": "user", "content": "你好"}],
 )
 print(resp.choices[0].message.content)`}</pre>
@@ -56,7 +56,7 @@ const client = new OpenAI({
 });
 
 const resp = await client.chat.completions.create({
-  model: 'gpt-4o-mini',
+  model: 'gpt-5.3-codex',
   messages: [{ role: 'user', content: '你好' }],
 });
 console.log(resp.choices[0].message.content);`}</pre>

@@ -58,6 +58,7 @@ const providerLabel: Record<string, string> = {
   glm: 'GLM (Zhipu)',
   zai: 'Z.AI',
   qwen: 'Qwen',
+  dashscope: '阿里通义千问',
   grok: 'Grok',
   doubao: 'Doubao',
   llama: 'Llama',
@@ -94,6 +95,7 @@ const providerAvatar = (
     zhipu: Zhipu,
     zai: Zhipu,
     qwen: Qwen,
+    dashscope: Qwen,
     doubao: Doubao,
   };
   const Icon = map[key];
@@ -144,7 +146,6 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>('__all__');
   const [providerFilter, setProviderFilter] = useState<string>('__all__');
-  const [tagFilter, setTagFilter] = useState<string>('__all__');
   const [pickedModel, setPickedModel] = useState<API.PublicModel | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -158,19 +159,16 @@ export default function Home() {
     });
   }, []);
 
-  const { types, providers, tagOptions } = useMemo(() => {
+  const { types, providers } = useMemo(() => {
     const t = new Set<string>();
     const p = new Set<string>();
-    const g = new Set<string>();
     for (const m of list) {
       if (m.type) t.add(m.type);
       if (m.provider_type) p.add(m.provider_type);
-      if (m.tags && Array.isArray(m.tags)) m.tags.forEach((x) => g.add(x));
     }
     return {
       types: Array.from(t),
       providers: Array.from(p),
-      tagOptions: Array.from(g),
     };
   }, [list]);
 
@@ -179,12 +177,9 @@ export default function Home() {
       if (typeFilter !== '__all__' && m.type !== typeFilter) return false;
       if (providerFilter !== '__all__' && m.provider_type !== providerFilter)
         return false;
-      if (tagFilter !== '__all__') {
-        if (!m.tags || !m.tags.includes(tagFilter)) return false;
-      }
       return true;
     });
-  }, [list, typeFilter, providerFilter, tagFilter]);
+  }, [list, typeFilter, providerFilter]);
 
   // quickCreateKey —— "极简生成 Key" 流程:不再弹表单让用户填名字/有效期/额度,
   // 直接用模型名做 Key 名、不限额度、无有效期,拿到 key 后弹结果框让用户复制。
@@ -302,30 +297,20 @@ export default function Home() {
           AI Relay 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini
           等模型;支持多币种计费、流式转发、细粒度成本控制。
         </p>
-        <div className="hero-cta">
-          {!user ? (
-            <>
-              <Button
-                type="primary"
-                size="large"
-                onClick={() => history.push('/auth/register')}
-              >
-                免费注册
-              </Button>
-              <Button size="large" onClick={() => history.push('/auth/login')}>
-                已有账号,登录
-              </Button>
-            </>
-          ) : (
+        {!user && (
+          <div className="hero-cta">
             <Button
               type="primary"
               size="large"
-              onClick={() => history.push('/console/dashboard')}
+              onClick={() => history.push('/auth/register')}
             >
-              进入控制台
+              免费注册
             </Button>
-          )}
-        </div>
+            <Button size="large" onClick={() => history.push('/auth/login')}>
+              已有账号,登录
+            </Button>
+          </div>
+        )}
         <div className="hero-badges">
           <div>
             <span className="b-num">20+</span>内置模型
@@ -363,15 +348,8 @@ export default function Home() {
               label: typeLabel[t]?.text ?? t,
             })),
           )}
-          {tagOptions.length > 0 &&
-            renderFilter(
-              '标签',
-              tagFilter,
-              setTagFilter,
-              tagOptions.map((t) => ({ value: t, label: t })),
-            )}
           {renderFilter(
-            '开发者',
+            '供应商',
             providerFilter,
             setProviderFilter,
             providers.map((p) => ({
