@@ -7,18 +7,6 @@ import {
   VideoCameraOutlined,
 } from '@ant-design/icons';
 import {
-  Anthropic,
-  Azure,
-  DeepSeek,
-  Doubao,
-  Gemini,
-  Kimi,
-  Moonshot,
-  OpenAI,
-  Qwen,
-  Zhipu,
-} from '@lobehub/icons';
-import {
   ModalForm,
   ProFormDatePicker,
   ProFormDigit,
@@ -74,36 +62,8 @@ const typeLabel: Record<string, { text: string; icon: React.ReactNode }> = {
   rerank: { text: '重排序', icon: <ThunderboltOutlined /> },
 };
 
-// 把 provider_type 映射到 @lobehub/icons 的 Avatar 组件;未匹配时返回 null,调用方做降级
-const providerAvatar = (
-  providerType: string,
-  size = 36,
-): React.ReactNode => {
-  const key = (providerType || '').toLowerCase();
-  const map: Record<string, any> = {
-    openai: OpenAI,
-    anthropic: Anthropic,
-    gemini: Gemini,
-    google: Gemini,
-    azure: Azure,
-    kimi: Kimi,
-    'kimi-code': Kimi,
-    moonshot: Moonshot,
-    deepseek: DeepSeek,
-    glm: Zhipu,
-    'glm-code': Zhipu,
-    zhipu: Zhipu,
-    zai: Zhipu,
-    qwen: Qwen,
-    dashscope: Qwen,
-    doubao: Doubao,
-  };
-  const Icon = map[key];
-  if (!Icon) return null;
-  return <Icon.Avatar size={size} />;
-};
-
-// 无品牌图标时降级为首字母彩色圆
+// 厂商首字母彩色圆。之前这里接过 @lobehub/icons,但当前版本会间接依赖
+// React 19 的 `use` export,在 React 18 项目里会导致生产构建失败。
 const providerInitialColor = (p: string) => {
   const palette = [
     '#4F46E5',
@@ -376,16 +336,14 @@ export default function Home() {
                 <Col key={m.id} xs={24} md={12} xl={12}>
                   <div className="model-card">
                     <div className="model-card-header">
-                      {providerAvatar(m.provider_type, 36) ?? (
-                        <div
-                          className="model-icon"
-                          style={{
-                            background: providerInitialColor(m.provider_type),
-                          }}
-                        >
-                          {(m.provider_type || '?').slice(0, 1).toUpperCase()}
-                        </div>
-                      )}
+                      <div
+                        className="model-icon"
+                        style={{
+                          background: providerInitialColor(m.provider_type),
+                        }}
+                      >
+                        {(m.provider_type || '?').slice(0, 1).toUpperCase()}
+                      </div>
                       <div className="model-card-title">
                         <div className="model-card-name">
                           {m.display_name || m.name}

@@ -1,9 +1,12 @@
 import {
+  DeleteOutlined,
   DownloadOutlined,
   HistoryOutlined,
   LoadingOutlined,
   PictureOutlined,
+  PlusOutlined,
   SendOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -17,9 +20,11 @@ import {
   Space,
   Spin,
   Tag,
+  Upload,
 } from 'antd';
+import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { systemApi, tokenApi } from '@/services/api';
+import { assetApi, systemApi, tokenApi } from '@/services/api';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
 const { TextArea } = Input;
@@ -36,6 +41,14 @@ function extractErrMsg(raw: string, httpStatus: number): string {
 
 type ImageItem = { url?: string; b64_json?: string };
 
+type ReferenceImage = {
+  uid: string;
+  url: string;
+  name: string;
+  assetId?: number;
+  source: 'upload' | 'url';
+};
+
 const SIZE_OPTIONS = [
   { value: '512x512', label: '512 × 512' },
   { value: '1024x1024', label: '1024 × 1024' },
@@ -49,6 +62,8 @@ export default function ImagePanel() {
   const [modelName, setModelName] = useState<string>();
   const [tokenId, setTokenId] = useState<number>();
   const [prompt, setPrompt] = useState('');
+  const [imageURL, setImageURL] = useState('');
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [size, setSize] = useState<string | undefined>('1024x1024');
   const [n, setN] = useState(1);
 
@@ -58,6 +73,7 @@ export default function ImagePanel() {
   const [items, setItems] = useState<ImageItem[]>([]);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [uploadingRef, setUploadingRef] = useState(false);
 
   // 计时器:loading 时每 100ms tick 一次,进度条用这个驱动
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -90,6 +106,89 @@ export default function ImagePanel() {
     !selectedToken?.allowed_models?.length ||
     selectedToken.allowed_models.includes(modelName || '');
 
+  const referenceURLs = () => {
+    const urls = referenceImages.map((x) => x.url).filter(Boolean);
+    const manual = imageURL.trim();
+    if (manual && !urls.includes(manual)) urls.push(manual);
+    return urls;
+  };
+
+  const addReferenceURL = () => {
+    const url = imageURL.trim();
+    if (!url) return message.warning('请输入参考图 URL');
+    setReferenceImages((prev) => {
+      if (prev.some((x) => x.url === url)) return prev;
+      return [
+        ...prev,
+        {
+          uid: `url-${Date.now()}`,
+          url,
+          name: '外部 URL',
+          source: 'url',
+        },
+      ];
+    });
+    setImageURL('');
+  };
+
+  const removeReferenceImage = (uid: string) => {
+    setReferenceImages((prev) => prev.filter((x) => x.uid !== uid));
+  };
+
+  const uploadProps: UploadProps = {
+    accept: 'image/*',
+    multiple: true,
+    showUploadList: false,
+    beforeUpload: (file) => {
+      if (file.type && !file.type.startsWith('image/')) {
+        message.warning('请上传图片文件');
+        return Upload.LIST_IGNORE;
+      }
+      return true;
+    },
+    customRequest: async ({ file, onSuccess, onError }) => {
+      setUploadingRef(true);
+      try {
+        const f = file as File;
+        const uploaded = await assetApi.upload(f, {
+          module: 'image',
+          purpose: 'image_reference',
+        });
+        if (uploaded.code !== 0 || !uploaded.data) {
+          throw new Error(uploaded.message || '上传失败');
+        }
+
+        let url = uploaded.data.public_url;
+        if (!url) {
+          const detail = await assetApi.detail(uploaded.data.id);
+          if (detail.code !== 0 || !detail.data?.url) {
+            throw new Error(detail.message || '获取素材 URL 失败');
+          }
+          url = detail.data.url;
+        }
+
+        const item: ReferenceImage = {
+          uid: `asset-${uploaded.data.id}-${Date.now()}`,
+          assetId: uploaded.data.id,
+          url,
+          name: f.name || uploaded.data.filename || '参考图',
+          source: 'upload',
+        };
+        setReferenceImages((prev) => {
+          if (prev.some((x) => x.url === url)) return prev;
+          return [...prev, item];
+        });
+        message.success('参考图已添加');
+        onSuccess?.(uploaded as any);
+      } catch (e: any) {
+        message.error(e?.message || '上传失败');
+        onError?.(e);
+      } finally {
+        setUploadingRef(false);
+      }
+    },
+  };
+
   const startTimer = () => {
     startAtRef.current = Date.now();
     setElapsedMs(0);
@@ -118,18 +217,27 @@ export default function ImagePanel() {
     startTimer();
 
     try {
+      const refs = referenceURLs();
+      const body: any = {
+        model: modelName,
+        prompt: prompt.trim(),
+        n,
+        size,
+      };
+      if (refs.length === 1) {
+        body.image_url = refs[0];
+      } else if (refs.length > 1) {
+        body.image_url = refs[0];
+        body.images = refs;
+      }
+
       const res = await fetch('/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${selectedToken.key}`,
         },
-        body: JSON.stringify({
-          model: modelName,
-          prompt: prompt.trim(),
-          n,
-          size,
-        }),
+        body: JSON.stringify(body),
       });
       const text = await res.text();
       if (!res.ok) {
@@ -238,6 +346,68 @@ export default function ImagePanel() {
                   disabled={phase === 'loading'}
                 />
               </div>
+            </div>
+            <div>
+              <div style={labelStyle}>参考图(可选,图生图)</div>
+              <Space.Compact style={{ width: '100%' }}>
+                <Input
+                  placeholder="https://... 或 data:image/...;base64,..."
+                  value={imageURL}
+                  onChange={(e) => setImageURL(e.target.value)}
+                  allowClear
+                  disabled={phase === 'loading'}
+                  onPressEnter={addReferenceURL}
+                />
+                <Button
+                  icon={<PlusOutlined />}
+                  onClick={addReferenceURL}
+                  disabled={phase === 'loading' || !imageURL.trim()}
+                >
+                  添加
+                </Button>
+              </Space.Compact>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Upload {...uploadProps} disabled={phase === 'loading'}>
+                  <Button
+                    icon={<UploadOutlined />}
+                    loading={uploadingRef}
+                    disabled={phase === 'loading'}
+                  >
+                    上传参考图
+                  </Button>
+                </Upload>
+                {referenceImages.length > 0 && (
+                  <Tag color="blue" style={{ margin: 0 }}>
+                    {referenceImages.length} 张
+                  </Tag>
+                )}
+              </div>
+              {referenceImages.length > 0 && (
+                <div style={referenceGridStyle}>
+                  {referenceImages.map((item, idx) => (
+                    <div key={item.uid} style={referenceTileStyle}>
+                      <Image
+                        src={item.url}
+                        alt={item.name}
+                        width={72}
+                        height={72}
+                        style={{ objectFit: 'cover', display: 'block' }}
+                        preview={{ src: item.url }}
+                      />
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        icon={<DeleteOutlined />}
+                        onClick={() => removeReferenceImage(item.uid)}
+                        disabled={phase === 'loading'}
+                        style={referenceDeleteStyle}
+                      />
+                      {idx === 0 && <span style={referenceBadgeStyle}>主图</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <div style={labelStyle}>提示词</div>
@@ -426,4 +596,43 @@ const placeholderWrap: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   padding: '24px 16px',
+};
+
+const referenceGridStyle: React.CSSProperties = {
+  marginTop: 10,
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, 72px)',
+  gap: 8,
+};
+
+const referenceTileStyle: React.CSSProperties = {
+  position: 'relative',
+  width: 72,
+  height: 72,
+  borderRadius: 8,
+  overflow: 'hidden',
+  border: '1px solid rgba(0,0,0,0.08)',
+  background: '#fafafa',
+};
+
+const referenceDeleteStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: 2,
+  right: 2,
+  width: 24,
+  height: 24,
+  padding: 0,
+  background: 'rgba(255,255,255,0.88)',
+};
+
+const referenceBadgeStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: 4,
+  bottom: 4,
+  padding: '1px 5px',
+  borderRadius: 4,
+  background: 'rgba(22,119,255,0.92)',
+  color: '#fff',
+  fontSize: 11,
+  lineHeight: '16px',
 };
