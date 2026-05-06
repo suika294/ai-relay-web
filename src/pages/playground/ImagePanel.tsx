@@ -25,6 +25,7 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
 const { TextArea } = Input;
@@ -231,7 +232,7 @@ export default function ImagePanel() {
         body.images = refs;
       }
 
-      const res = await fetch('/v1/images/generations', {
+      const res = await fetch(apiURL('/v1/images/generations'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

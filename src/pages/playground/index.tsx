@@ -25,6 +25,7 @@ import {
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { systemApi, tokenApi } from '@/services/api';
+import { apiURL } from '@/utils/request';
 import ImagePanel from './ImagePanel';
 import VideoPanel from './VideoPanel';
 import './playground.css';
@@ -303,7 +304,7 @@ function ChatPanel() {
     abortRef.current = ctrl;
 
     try {
-      const res = await fetch('/v1/chat/completions', {
+      const res = await fetch(apiURL('/v1/chat/completions'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

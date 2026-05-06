@@ -37,10 +37,27 @@ pnpm build              # 输出到 dist/
 pnpm preview            # 本地预览构建产物
 ```
 
+如果用户端和后端不在同一个域名下，构建时指定后端 API 域名：
+
+```bash
+UMI_APP_API_BASE_URL=https://aihub.dok.top pnpm build
+```
+
+这样生产包会直接请求 `https://aihub.dok.top/api/v1/...` 和 `https://aihub.dok.top/v1/...`。如果不设置该变量，生产包会继续请求当前站点同域的 `/api`、`/v1`，需要前端站点 Nginx 把这两个路径反代到后端。
+
+跨域直连后端时，后端 `config/config.yaml` 的 `server.cors_origins` 也要包含用户端域名。
+
 ### Docker 镜像
 ```bash
-docker build -t ai-relay-web:latest .
+docker build --build-arg UMI_APP_API_BASE_URL=https://aihub.dok.top -t ai-relay-web:latest .
 docker run -d -p 8000:80 ai-relay-web:latest
+```
+
+也可以不写入 `UMI_APP_API_BASE_URL`，改用容器内 Nginx 同域反代：
+
+```bash
+docker build -t ai-relay-web:latest .
+docker run -d -p 8000:80 -e API_PROXY_PASS=http://host.docker.internal:8080 ai-relay-web:latest
 ```
 
 ## 🧯 常见问题
@@ -50,6 +67,7 @@ docker run -d -p 8000:80 ai-relay-web:latest
 | `pnpm: command not found` | 没装 pnpm | `npm i -g pnpm` 或 `brew install pnpm` |
 | 页面报 502 / 404 调用后端失败 | 后端未启动 | 启动后端 `:8080`；或检查 `.umirc.ts` proxy.target |
 | 控制台 `Failed to fetch /api/v1/...` | 后端 CORS 或鉴权未通过 | 看后端日志；检查 localStorage 的 `token` 是否存在 |
+| 线上登录 `POST /api/v1/auth/login` 返回 Nginx 403 且响应体为空 | 静态站点没有把 `/api` 反代到后端，打包后的 `.umirc.ts proxy` 不生效 | 设置 `UMI_APP_API_BASE_URL=https://你的后端域名` 后重新构建，或在前端站点 Nginx 增加 `/api/`、`/v1/` 反代 |
 | 修改 `.umirc.ts` 不生效 | dev server 未重启 | `Ctrl+C` 后 `pnpm dev` 再起 |
 
 ## 🧭 页面地图
@@ -108,4 +126,3 @@ frontend-web/
 - [开发指南](./docs/development.md)
 - [页面地图](./docs/pages.md)
 - [状态管理](./docs/state.md)
-

@@ -47,6 +47,7 @@ const providerLabel: Record<string, string> = {
   zai: 'Z.AI',
   qwen: 'Qwen',
   dashscope: '阿里通义千问',
+  xiaomi: '小米 MiMo',
   grok: 'Grok',
   doubao: 'Doubao',
   llama: 'Llama',

@@ -1,7 +1,14 @@
 import { defineConfig } from '@umijs/max';
 
+const apiBaseUrl =
+  process.env.UMI_APP_API_BASE_URL ||
+  (process.env.NODE_ENV === 'production' ? 'http://aihub.dok.top' : '');
+
 export default defineConfig({
   title: 'AI Relay',
+  define: {
+    'process.env.UMI_APP_API_BASE_URL': apiBaseUrl,
+  },
   antd: { dark: false },
   access: {},
   model: {},
@@ -17,6 +24,7 @@ export default defineConfig({
     baseNavigator: true,
   },
   npmClient: 'pnpm',
+  hash: true,
   routes: [
     // ========= 公开页（不走 ProLayout） =========
     { path: '/', component: './home', layout: false },
@@ -105,11 +113,13 @@ export default defineConfig({
   ],
   proxy: {
     '/api': {
-      target: 'http://localhost:8080',
+      // target: 'http://localhost:8080',
+      target: 'http://aihub.dok.top',
       changeOrigin: true,
     },
     '/v1': {
       target: 'http://localhost:8080',
+      // target: 'http://aihub.dok.top',
       changeOrigin: true,
     },
   },

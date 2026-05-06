@@ -24,6 +24,7 @@ const providerLabel: Record<string, string> = {
   kimi: 'Kimi (Moonshot)',
   deepseek: 'DeepSeek',
   glm: 'GLM (Zhipu)',
+  xiaomi: '小米 MiMo',
   custom: 'Custom',
 };
 

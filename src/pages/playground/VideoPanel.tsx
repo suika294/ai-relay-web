@@ -28,6 +28,7 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
 const { TextArea } = Input;
@@ -263,7 +264,7 @@ export default function VideoPanel() {
     if (!selectedToken) return;
     if (!auto) setPolling(true);
     try {
-      const res = await fetch(`/v1/videos/generations/${id}`, {
+      const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
         headers: { Authorization: `Bearer ${selectedToken.key}` },
       });
       const text = await res.text();
@@ -312,7 +313,7 @@ export default function VideoPanel() {
       if (duration) body.duration = duration;
       if (resolution) body.resolution = resolution;
 
-      const res = await fetch('/v1/videos/generations', {
+      const res = await fetch(apiURL('/v1/videos/generations'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -342,7 +343,7 @@ export default function VideoPanel() {
     if (!task || !selectedToken) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
-      const res = await fetch(`/v1/videos/generations/${task.id}/cancel`, {
+      const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${selectedToken.key}` },
       });

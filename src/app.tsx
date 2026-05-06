@@ -1,12 +1,13 @@
 import type { RequestConfig } from '@umijs/max';
 import { message } from 'antd';
 import UserMenu from '@/components/UserMenu';
+import { API_BASE_URL, apiURL } from '@/utils/request';
 
 async function fetchProfileWithTimeout(token: string, ms: number) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch('/api/v1/user/profile', {
+    const res = await fetch(apiURL('/api/v1/user/profile'), {
       headers: { Authorization: `Bearer ${token}` },
       signal: ctrl.signal,
     });
@@ -47,6 +48,7 @@ export async function getInitialState(): Promise<{
 }
 
 export const request: RequestConfig = {
+  baseURL: API_BASE_URL || undefined,
   timeout: 30000,
   errorConfig: {
     errorHandler(error: any) {
