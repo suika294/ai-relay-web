@@ -3,6 +3,7 @@ import { defineConfig } from '@umijs/max';
 const apiBaseUrl =
   process.env.UMI_APP_API_BASE_URL ||
   (process.env.NODE_ENV === 'production' ? 'http://aihub.dok.top' : '');
+const devProxyTarget = process.env.UMI_DEV_PROXY_TARGET || 'http://localhost:8080';
 
 export default defineConfig({
   title: 'AI Relay',
@@ -113,13 +114,11 @@ export default defineConfig({
   ],
   proxy: {
     '/api': {
-      // target: 'http://localhost:8080',
-      target: 'http://aihub.dok.top',
+      target: devProxyTarget,
       changeOrigin: true,
     },
     '/v1': {
-      target: 'http://localhost:8080',
-      // target: 'http://aihub.dok.top',
+      target: devProxyTarget,
       changeOrigin: true,
     },
   },

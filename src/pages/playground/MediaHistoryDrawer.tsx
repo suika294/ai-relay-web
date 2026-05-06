@@ -26,6 +26,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { userApi } from '@/services/api';
+import { publicMediaURL } from '@/utils/media';
 
 const { Text } = Typography;
 
@@ -44,7 +45,7 @@ const statusMeta: Record<string, { text: string; color: string }> = {
 function primaryURL(t: API.MediaTask): string | undefined {
   const d = t.data?.[0];
   if (!d) return undefined;
-  if (d.url) return d.url;
+  if (d.url) return publicMediaURL(d.url);
   if (d.b64_json) return `data:image/png;base64,${d.b64_json}`;
   return undefined;
 }

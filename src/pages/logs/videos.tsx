@@ -2,6 +2,7 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Tag, Typography } from 'antd';
 import { DownloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { userApi } from '@/services/api';
+import { publicMediaURL } from '@/utils/media';
 
 const { Text, Link } = Typography;
 
@@ -85,7 +86,7 @@ export default function VideoHistory() {
             search: false,
             width: 120,
             render: (_, row) => {
-              const url = row.data?.[0]?.url;
+              const url = publicMediaURL(row.data?.[0]?.url);
               if (!url) return '—';
               return (
                 <Link href={url} target="_blank" rel="noreferrer">
@@ -98,9 +99,11 @@ export default function VideoHistory() {
         expandable={{
           // 只在成功/失败行允许展开详情;排队中的展开无信息
           rowExpandable: (row) =>
-            row.status === 'succeeded' || row.status === 'failed' || !!row.data?.[0]?.url,
+            row.status === 'succeeded' ||
+            row.status === 'failed' ||
+            !!publicMediaURL(row.data?.[0]?.url),
           expandedRowRender: (row) => {
-            const url = row.data?.[0]?.url;
+            const url = publicMediaURL(row.data?.[0]?.url);
             const cover = row.data?.[0]?.cover_url;
             return (
               <div style={{ padding: '8px 4px' }}>

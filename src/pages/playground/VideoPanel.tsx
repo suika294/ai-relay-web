@@ -28,6 +28,10 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import {
+  isAuthenticatedGeminiDownloadURL,
+  publicMediaURL,
+} from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
@@ -35,12 +39,30 @@ const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_video_last_task_v1';
 
 function extractErrMsg(raw: string, httpStatus: number): string {
+  let msg = '';
   try {
     const j = JSON.parse(raw);
-    return j?.error?.message || j?.message || raw.slice(0, 500);
+    msg = j?.error?.message || j?.message || raw.slice(0, 500);
   } catch {
-    return raw ? raw.slice(0, 500) : `HTTP ${httpStatus}`;
+    msg = raw ? raw.slice(0, 500) : `HTTP ${httpStatus}`;
   }
+  return friendlyVideoError(msg);
+}
+
+function friendlyVideoError(msg: string): string {
+  if (/ModelNotOpen|has not activated the model/i.test(msg)) {
+    return [
+      '上游 Ark 账号未开通当前 Doubao Seedance 模型。请在火山 Ark 控制台启用该模型,或在渠道配置 endpoint_id 指向已开通的专属推理接入点。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  if (/gemini (veo )?image .*fetch status=404/i.test(msg)) {
+    return [
+      '参考图 URL 无法被后端读取(HTTP 404)。如果这是 Playground 上传的图片,请确认 /api 和 /v1 指向同一个后端,然后重新上传参考图再提交。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  return msg;
 }
 
 type VideoTask = {
@@ -61,6 +83,10 @@ type ReferenceImage = {
   assetId?: number;
   source: 'upload' | 'url';
 };
+
+function hasPrivateVideoURL(t?: VideoTask | null): boolean {
+  return isAuthenticatedGeminiDownloadURL(t?.data?.[0]?.url);
+}
 
 function statusColor(s: string): 'default' | 'processing' | 'success' | 'error' | 'warning' {
   switch (s) {
@@ -286,6 +312,13 @@ export default function VideoPanel() {
     }
   };
 
+  useEffect(() => {
+    if (!task || !selectedToken || !hasPrivateVideoURL(task)) return;
+    setErrMsg('历史缓存里仍是上游私有下载地址,正在重新获取转存后的 URL');
+    fetchOnce(task.id, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id, task?.data?.[0]?.url, selectedToken?.id]);
+
   const submit = async () => {
     if (!prompt.trim()) return message.warning('请输入提示词');
     if (!modelName) return message.warning('请选择模型');
@@ -374,7 +407,7 @@ export default function VideoPanel() {
     task?.completed_at && task?.created_at
       ? `${task.completed_at - task.created_at}s`
       : undefined;
-  const videoURL = task?.data?.[0]?.url;
+  const videoURL = publicMediaURL(task?.data?.[0]?.url);
 
   return (
     <div style={{ padding: '8px 8px 32px', maxWidth: 1120, margin: '0 auto' }}>
@@ -692,6 +725,15 @@ export default function VideoPanel() {
                     </a>
                   </div>
                 </div>
+              )}
+
+              {task.status === 'succeeded' && !videoURL && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="视频已完成,正在等待后端返回可访问 URL"
+                  description="页面不会直接请求上游私有下载地址,请稍后刷新任务。"
+                />
               )}
 
               {/* 失败:错误详情 */}

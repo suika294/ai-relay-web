@@ -143,8 +143,9 @@ declare namespace API {
   }
 
   // MediaTask 图像/视频任务的扁平视图,后端 VideoTaskView / ImageTaskView 对齐。
-  // data[] 对应最终产物:视频时 url = 视频文件,cover_url = 首帧缩略;图像时 url = 图片 URL
-  // 或 b64_json 内容,取决于上游。created_at / completed_at 为 unix 秒。
+  // data[] 对应最终产物:视频时 url = 后端已转存的可访问视频文件,
+  // cover_url = 首帧缩略;图像时 url = 图片 URL 或 b64_json 内容,取决于上游。
+  // created_at / completed_at 为 unix 秒。
   interface MediaTaskOutput {
     url?: string;
     cover_url?: string;
