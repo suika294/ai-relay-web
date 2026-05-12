@@ -1,0 +1,8 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Xiaomi MiMo">
+  <title>Xiaomi MiMo</title>
+  <rect width="64" height="64" rx="14" fill="#FF6900"/>
+  <text x="32" y="44"
+        font-family="'Helvetica Neue', 'PingFang SC', -apple-system, sans-serif"
+        font-size="28" font-weight="700" text-anchor="middle" fill="#fff"
+        letter-spacing="-1">Mi</text>
+</svg>

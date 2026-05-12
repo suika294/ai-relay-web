@@ -107,6 +107,10 @@ export const systemApi = {
   models: () => request<API.Response<any[]>>('/api/v1/system/models'),
 };
 
+export const bannerApi = {
+  list: () => request<API.Response<API.Banner[]>>('/api/v1/system/banners'),
+};
+
 export const assetApi = {
   list: (params: { page?: number; size?: number; module?: string }) =>
     request<API.Response<{ list: API.Asset[]; total: number }>>('/api/v1/assets', {

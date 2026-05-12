@@ -12,4 +12,5 @@ FROM nginx:1.25-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 ENV API_PROXY_PASS=http://host.docker.internal:8080
+ENV AI_RELAY_STORAGE_ROOT=/var/lib/ai-relay/storage
 EXPOSE 80

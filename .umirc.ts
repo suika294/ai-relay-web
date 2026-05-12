@@ -1,11 +1,11 @@
 import { defineConfig } from '@umijs/max';
 
 const apiBaseUrl =
-  process.env.UMI_APP_API_BASE_URL ||
-  (process.env.NODE_ENV === 'production' ? 'http://aihub.dok.top' : '');
+  process.env.UMI_APP_API_BASE_URL || '';
+const devProxyTarget = process.env.UMI_DEV_PROXY_TARGET || 'http://localhost:8080';
 
 export default defineConfig({
-  title: 'AI Relay',
+  title: '模桥',
   define: {
     'process.env.UMI_APP_API_BASE_URL': apiBaseUrl,
   },
@@ -15,7 +15,7 @@ export default defineConfig({
   initialState: {},
   request: {},
   layout: {
-    title: 'AI Relay 控制台',
+    title: '模桥 控制台',
     locale: true,
   },
   locale: {
@@ -30,7 +30,28 @@ export default defineConfig({
     { path: '/', component: './home', layout: false },
     { path: '/landing-classic', component: './landing', layout: false },
     { path: '/pricing-classic', component: './pricing', layout: false },
-    { path: '/docs', component: './docs', layout: false },
+    // 文档:多路由 + 侧边栏。父级 DocsLayout 用 <Outlet/> 渲染子页内容,
+    // 各子页就是普通 React 组件,只关心自身的正文。
+    {
+      path: '/docs',
+      component: '@/layouts/DocsLayout',
+      layout: false,
+      routes: [
+        { path: '/docs', redirect: '/docs/quick-start' },
+        { path: '/docs/quick-start', component: './docs/quick-start' },
+        { path: '/docs/auth', component: './docs/auth' },
+        { path: '/docs/sdk', component: './docs/sdk' },
+        { path: '/docs/chat', component: './docs/chat' },
+        { path: '/docs/streaming', component: './docs/streaming' },
+        { path: '/docs/models', component: './docs/models' },
+        { path: '/docs/images', component: './docs/images' },
+        { path: '/docs/videos', component: './docs/videos' },
+        { path: '/docs/embeddings', component: './docs/embeddings' },
+        { path: '/docs/errors', component: './docs/errors' },
+        { path: '/docs/rate-limits', component: './docs/rate-limits' },
+        { path: '/docs/faq', component: './docs/faq' },
+      ],
+    },
     { path: '/billing', component: './billing/public-recharge', layout: false },
     { path: '/auth/login', component: './auth/login', layout: false },
     { path: '/auth/register', component: './auth/register', layout: false },
@@ -113,13 +134,11 @@ export default defineConfig({
   ],
   proxy: {
     '/api': {
-      // target: 'http://localhost:8080',
-      target: 'http://aihub.dok.top',
+      target: devProxyTarget,
       changeOrigin: true,
     },
     '/v1': {
-      target: 'http://localhost:8080',
-      // target: 'http://aihub.dok.top',
+      target: devProxyTarget,
       changeOrigin: true,
     },
   },

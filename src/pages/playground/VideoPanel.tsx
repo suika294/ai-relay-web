@@ -28,6 +28,10 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import {
+  isAuthenticatedGeminiDownloadURL,
+  publicMediaURL,
+} from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
@@ -35,12 +39,55 @@ const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_video_last_task_v1';
 
 function extractErrMsg(raw: string, httpStatus: number): string {
+  let msg = '';
   try {
     const j = JSON.parse(raw);
-    return j?.error?.message || j?.message || raw.slice(0, 500);
+    msg = j?.error?.message || j?.message || raw.slice(0, 500);
   } catch {
-    return raw ? raw.slice(0, 500) : `HTTP ${httpStatus}`;
+    msg = raw ? raw.slice(0, 500) : `HTTP ${httpStatus}`;
   }
+  return friendlyVideoError(msg);
+}
+
+function friendlyVideoError(msg: string): string {
+  if (/invalid_image_url|Doubao Seedance requires .*publicly reachable/i.test(msg)) {
+    return [
+      'Doubao Seedance 的参考图必须是公网可访问的 http(s) 图片 URL。data/base64、localhost、内网地址、未配置公网访问的上传素材都不能作为 Ark image_url。',
+      '请配置公网 storage/CDN,或在参考图输入框里填写公网图片 URL。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  if (/ModelNotOpen|has not activated the model/i.test(msg)) {
+    return [
+      '上游 Ark 账号未开通当前 Doubao Seedance 模型。请在火山 Ark 控制台启用该模型,或在渠道配置 endpoint_id 指向已开通的专属推理接入点。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  if (/gemini (veo )?image .*fetch status=404/i.test(msg)) {
+    return [
+      '参考图 URL 无法被后端读取(HTTP 404)。如果这是 Playground 上传的图片,请确认 /api 和 /v1 指向同一个后端,然后重新上传参考图再提交。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  if (/trying to proxy|econnrefused|econnreset|socket hang up/i.test(msg)) {
+    return [
+      '前端开发代理暂时连不上后端。自动刷新会继续重试;如果一直出现,请确认后端服务已启动,并检查 UMI_DEV_PROXY_TARGET 或 UMI_APP_API_BASE_URL 是否指向同一个后端。',
+      `原始错误: ${msg}`,
+    ].join('\n\n');
+  }
+  return msg;
+}
+
+function isTransientPollError(status: number, msg: string): boolean {
+  return (
+    status === 0 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    /trying to proxy|failed to fetch|networkerror|load failed|econnrefused|econnreset|socket hang up/i.test(
+      msg,
+    )
+  );
 }
 
 type VideoTask = {
@@ -61,6 +108,53 @@ type ReferenceImage = {
   assetId?: number;
   source: 'upload' | 'url';
 };
+
+function hasPrivateVideoURL(t?: VideoTask | null): boolean {
+  return isAuthenticatedGeminiDownloadURL(t?.data?.[0]?.url);
+}
+
+function isDoubaoSeedanceModel(model?: string): boolean {
+  return /doubao-seedance/i.test(model || '');
+}
+
+function isViduModel(model?: string): boolean {
+  return /vidu/i.test(model || '');
+}
+
+function isPlaceholderHost(host: string): boolean {
+  const normalized = host.toLowerCase().replace(/\.$/, '');
+  return (
+    normalized === 'example.com' ||
+    normalized === 'example.org' ||
+    normalized === 'example.net' ||
+    normalized === 'your-domain.com' ||
+    normalized.endsWith('.example.com') ||
+    normalized.endsWith('.example.org') ||
+    normalized.endsWith('.example.net') ||
+    normalized.endsWith('.your-domain.com') ||
+    normalized.endsWith('.example')
+  );
+}
+
+function isPublicHTTPImageURL(raw: string): boolean {
+  try {
+    const u = new URL(raw.trim());
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    if (!host || host === 'localhost' || host.endsWith('.localhost')) return false;
+    if (isPlaceholderHost(host)) return false;
+    const parts = host.split('.').map((x) => Number(x));
+    if (parts.length === 4 && parts.every((x) => Number.isInteger(x) && x >= 0 && x <= 255)) {
+      const [a, b] = parts;
+      if (a === 10 || a === 127 || a === 0 || (a === 169 && b === 254)) return false;
+      if (a === 172 && b >= 16 && b <= 31) return false;
+      if (a === 192 && b === 168) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function statusColor(s: string): 'default' | 'processing' | 'success' | 'error' | 'warning' {
   switch (s) {
@@ -156,6 +250,8 @@ export default function VideoPanel() {
   const tokenAllowsModel =
     !selectedToken?.allowed_models?.length ||
     selectedToken.allowed_models.includes(modelName || '');
+  const isSeedanceModel = isDoubaoSeedanceModel(modelName);
+  const requiresPublicReferenceURL = isSeedanceModel || isViduModel(modelName);
 
   const referenceURLs = () => {
     const urls = referenceImages.map((x) => x.url).filter(Boolean);
@@ -167,6 +263,9 @@ export default function VideoPanel() {
   const addReferenceURL = () => {
     const url = imageURL.trim();
     if (!url) return message.warning('请输入参考图 URL');
+    if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
+      return message.warning('当前模型的参考图必须是真实公网可访问的 http(s) 图片 URL,不能使用示例/localhost/内网地址');
+    }
     setReferenceImages((prev) => {
       if (prev.some((x) => x.url === url)) return prev;
       return [
@@ -216,6 +315,11 @@ export default function VideoPanel() {
             throw new Error(detail.message || '获取素材 URL 失败');
           }
           url = detail.data.url;
+        }
+        if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
+          message.warning('当前模型不能使用未配置公网访问的上传素材,请填写真实公网图片 URL 或配置 storage/CDN');
+          onSuccess?.(uploaded as any);
+          return;
         }
 
         const item: ReferenceImage = {
@@ -269,22 +373,42 @@ export default function VideoPanel() {
       });
       const text = await res.text();
       if (!res.ok) {
-        setErrMsg(extractErrMsg(text, res.status));
+        const msg = extractErrMsg(text, res.status);
+        if (auto && isTransientPollError(res.status, msg)) {
+          setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+          schedulePoll(id);
+          return;
+        }
+        setErrMsg(msg);
         return;
       }
       const t = JSON.parse(text) as VideoTask;
       setTask(t);
+      setErrMsg(null);
       if (t.status === 'queued' || t.status === 'running') {
         schedulePoll(id);
       } else {
         stopTimer();
       }
     } catch (e: any) {
-      setErrMsg(String(e?.message || e));
+      const msg = String(e?.message || e);
+      if (auto && isTransientPollError(0, msg)) {
+        setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+        schedulePoll(id);
+        return;
+      }
+      setErrMsg(msg);
     } finally {
       if (!auto) setPolling(false);
     }
   };
+
+  useEffect(() => {
+    if (!task || !selectedToken || !hasPrivateVideoURL(task)) return;
+    setErrMsg('历史缓存里仍是上游私有下载地址,正在重新获取转存后的 URL');
+    fetchOnce(task.id, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id, task?.data?.[0]?.url, selectedToken?.id]);
 
   const submit = async () => {
     if (!prompt.trim()) return message.warning('请输入提示词');
@@ -302,14 +426,18 @@ export default function VideoPanel() {
     try {
       const body: any = { model: modelName, prompt: prompt.trim() };
       const refs = referenceURLs();
-      if (refs.length === 1) {
-        body.image_url = refs[0];
-      } else if (refs.length > 1) {
-        body.image_url = refs[0];
+      if (requiresPublicReferenceURL) {
+        const invalid = refs.find((x) => !isPublicHTTPImageURL(x));
+        if (invalid) {
+          message.warning('当前模型的参考图必须是真实公网可访问的 http(s) 图片 URL,不能使用示例/localhost/内网地址');
+          return;
+        }
+      }
+      if (refs.length > 0) {
         body.images = refs;
       }
       const assetIds = referenceImages.map((x) => x.assetId || 0);
-      if (assetIds.some((id) => id > 0)) body.image_asset_ids = assetIds;
+      if (!requiresPublicReferenceURL && assetIds.some((id) => id > 0)) body.image_asset_ids = assetIds;
       if (duration) body.duration = duration;
       if (resolution) body.resolution = resolution;
 
@@ -374,7 +502,7 @@ export default function VideoPanel() {
     task?.completed_at && task?.created_at
       ? `${task.completed_at - task.created_at}s`
       : undefined;
-  const videoURL = task?.data?.[0]?.url;
+  const videoURL = publicMediaURL(task?.data?.[0]?.url);
 
   return (
     <div style={{ padding: '8px 8px 32px', maxWidth: 1120, margin: '0 auto' }}>
@@ -470,7 +598,7 @@ export default function VideoPanel() {
               <div style={labelStyle}>参考图(可选,图生视频)</div>
               <Space.Compact style={{ width: '100%' }}>
                 <Input
-                  placeholder="https://... 或 data:image/...;base64,..."
+                  placeholder={requiresPublicReferenceURL ? '需要真实公网 https:// 图片 URL' : 'https://... 或 data:image/...;base64,...'}
                   value={imageURL}
                   onChange={(e) => setImageURL(e.target.value)}
                   allowClear
@@ -639,6 +767,16 @@ export default function VideoPanel() {
                 </Tag>
               </div>
 
+              {errMsg && isInFlight && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message="刷新暂时失败"
+                  description={errMsg}
+                  style={{ marginBottom: 14 }}
+                />
+              )}
+
               {/* 进行中:大号 Spin + 实时计时 + 提示 */}
               {isInFlight && (
                 <div style={placeholderWrap}>
@@ -694,6 +832,15 @@ export default function VideoPanel() {
                 </div>
               )}
 
+              {task.status === 'succeeded' && !videoURL && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="视频已完成,正在等待后端返回可访问 URL"
+                  description="页面不会直接请求上游私有下载地址,请稍后刷新任务。"
+                />
+              )}
+
               {/* 失败:错误详情 */}
               {task.status === 'failed' && (
                 <Alert
@@ -715,8 +862,8 @@ export default function VideoPanel() {
                 />
               )}
 
-              {/* 浮于顶部的临时错误(提交后轮询失败等) */}
-              {errMsg && (
+              {/* 非进行中时保留手动刷新/取消等错误提示 */}
+              {errMsg && !isInFlight && (
                 <Alert
                   type="error"
                   showIcon

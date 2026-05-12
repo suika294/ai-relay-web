@@ -5,6 +5,7 @@ import {
   NumberOutlined,
   FileTextOutlined,
   VideoCameraOutlined,
+  SearchOutlined,
 } from '@ant-design/icons';
 import {
   ModalForm,
@@ -18,7 +19,9 @@ import { history, useModel } from '@umijs/max';
 import {
   Button,
   Col,
+  Input,
   Modal,
+  Pagination,
   Row,
   Space,
   Tag,
@@ -30,7 +33,8 @@ import dayjs from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import AuthModal from '@/components/AuthModal';
 import PublicLayout from '@/layouts/PublicLayout';
-import { systemApi, tokenApi } from '@/services/api';
+import { bannerApi, systemApi, tokenApi } from '@/services/api';
+import HeroCarousel from './HeroCarousel';
 
 const { Paragraph } = Typography;
 
@@ -41,15 +45,19 @@ const providerLabel: Record<string, string> = {
   google: 'Google',
   azure: 'Azure OpenAI',
   kimi: 'Kimi (Moonshot)',
+  'kimi-code': 'Kimi Code',
   moonshot: 'Moonshot AI',
   deepseek: 'DeepSeek',
   glm: 'GLM (Zhipu)',
+  'glm-code': 'GLM Code',
   zai: 'Z.AI',
   qwen: 'Qwen',
   dashscope: '阿里通义千问',
   xiaomi: '小米 MiMo',
   grok: 'Grok',
   doubao: 'Doubao',
+  kling: 'Kling',
+  vidu: 'Vidu',
   llama: 'Llama',
   custom: '自定义',
 };
@@ -63,8 +71,42 @@ const typeLabel: Record<string, { text: string; icon: React.ReactNode }> = {
   rerank: { text: '重排序', icon: <ThunderboltOutlined /> },
 };
 
-// 厂商首字母彩色圆。之前这里接过 @lobehub/icons,但当前版本会间接依赖
-// React 19 的 `use` export,在 React 18 项目里会导致生产构建失败。
+// 厂商官方 logo:走 lobehub 的纯静态 SVG 包,通过 unpkg CDN 直接 <img> 引用,
+// 不引入 npm 依赖,避开了之前 @lobehub/icons React 组件包对 React 19 `use`
+// export 的依赖(在 React 18 项目里会导致生产构建失败)。
+// 没有官方 logo 的 provider(xiaomi/custom 等)走下方 providerInitialColor 兜底。
+const providerIconSlug: Record<string, string> = {
+  openai: 'openai',
+  anthropic: 'claude-color',
+  gemini: 'gemini-color',
+  google: 'google-color',
+  azure: 'azure-color',
+  deepseek: 'deepseek-color',
+  glm: 'chatglm-color',
+  'glm-code': 'chatglm-color',
+  zai: 'chatglm-color',
+  qwen: 'qwen-color',
+  dashscope: 'qwen-color',
+  grok: 'grok',
+  doubao: 'doubao-color',
+  kling: 'kling-color',
+  llama: 'metaai-color',
+};
+
+// lobehub 没有官方 logo,或者官方 logo 是白色填充 (在白底 chip 上不可见,
+// 比如 kimi-color) 的厂商,放在 /public/providers/ 下做品牌色 SVG 兜底。
+const providerLocalIcon: Record<string, string> = {
+  vidu: '/providers/vidu.svg',
+  xiaomi: '/providers/xiaomi.svg',
+  kimi: '/providers/kimi.svg',
+  'kimi-code': '/providers/kimi.svg',
+  moonshot: '/providers/kimi.svg',
+};
+
+const LOBEHUB_ICON_BASE =
+  'https://unpkg.com/@lobehub/icons-static-svg@1/icons';
+
+// 厂商首字母彩色圆,作为 logo 加载失败 / 没有官方 logo 时的兜底。
 const providerInitialColor = (p: string) => {
   const palette = [
     '#4F46E5',
@@ -80,6 +122,42 @@ const providerInitialColor = (p: string) => {
   let h = 0;
   for (let i = 0; i < p.length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0;
   return palette[h % palette.length];
+};
+
+const ProviderLogo: React.FC<{ provider: string; size: number }> = ({
+  provider,
+  size,
+}) => {
+  const slug = providerIconSlug[provider];
+  const localIcon = providerLocalIcon[provider];
+  const [broken, setBroken] = useState(false);
+  const src = !broken && slug
+    ? `${LOBEHUB_ICON_BASE}/${slug}.svg`
+    : localIcon;
+  if (src) {
+    return (
+      <img
+        className="provider-logo-img"
+        src={src}
+        alt={provider}
+        style={{ width: size, height: size }}
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+  return (
+    <span
+      className="provider-logo-fallback"
+      style={{
+        width: size,
+        height: size,
+        background: providerInitialColor(provider),
+        fontSize: Math.max(10, Math.round(size * 0.45)),
+      }}
+    >
+      {(provider || '?').slice(0, 1).toUpperCase()}
+    </span>
+  );
 };
 
 // 把 max_tokens 数字格式化为 "128K" / "1M" 之类
@@ -104,9 +182,14 @@ export default function Home() {
   const user = initialState?.currentUser;
 
   const [list, setList] = useState<API.PublicModel[]>([]);
+  const [banners, setBanners] = useState<API.Banner[]>([]);
   const [loading, setLoading] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>('__all__');
   const [providerFilter, setProviderFilter] = useState<string>('__all__');
+  const [keyword, setKeyword] = useState<string>('');
+  const [page, setPage] = useState(1);
+  // 2 列 × 2 行 = 4,加上 hero + 过滤栏 + 分页条刚好一屏内,不必滚太多
+  const [pageSize, setPageSize] = useState(4);
   const [pickedModel, setPickedModel] = useState<API.PublicModel | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -118,6 +201,13 @@ export default function Home() {
       setList((res.data as API.PublicModel[]) || []);
       setLoading(false);
     });
+    // banners 失败不阻塞首页 —— 拉到则展示,拉不到则右侧塌掉走单列布局
+    bannerApi
+      .list()
+      .then((res) => {
+        if (res.code === 0) setBanners((res.data as API.Banner[]) || []);
+      })
+      .catch(() => {});
   }, []);
 
   const { types, providers } = useMemo(() => {
@@ -134,13 +224,48 @@ export default function Home() {
   }, [list]);
 
   const filtered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
     return list.filter((m) => {
       if (typeFilter !== '__all__' && m.type !== typeFilter) return false;
       if (providerFilter !== '__all__' && m.provider_type !== providerFilter)
         return false;
+      if (kw) {
+        const hay = `${m.name ?? ''} ${m.display_name ?? ''} ${
+          providerLabel[m.provider_type] ?? m.provider_type ?? ''
+        }`.toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
       return true;
     });
-  }, [list, typeFilter, providerFilter]);
+  }, [list, typeFilter, providerFilter, keyword]);
+
+  // 筛选/搜索变化时回到第 1 页,避免停留在已经不存在的页码上
+  useEffect(() => {
+    setPage(1);
+  }, [typeFilter, providerFilter, keyword]);
+
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize],
+  );
+
+  // 推荐模型:优先取带 `recommended` 标签的;若没有则降级取带 `new` 标签;
+  // 都没有时直接取列表前 4 个(后端通常按 sort 字段排过序了)。最多展示 4 张。
+  const recommended = useMemo(() => {
+    const tagged = list.filter((m) => m.tags?.includes('recommended'));
+    if (tagged.length >= 4) return tagged.slice(0, 4);
+    const news = list.filter((m) => m.tags?.includes('new'));
+    const merged = [...tagged];
+    for (const m of news) {
+      if (merged.length >= 4) break;
+      if (!merged.find((x) => x.id === m.id)) merged.push(m);
+    }
+    for (const m of list) {
+      if (merged.length >= 4) break;
+      if (!merged.find((x) => x.id === m.id)) merged.push(m);
+    }
+    return merged.slice(0, 4);
+  }, [list]);
 
   // quickCreateKey —— "极简生成 Key" 流程:不再弹表单让用户填名字/有效期/额度,
   // 直接用模型名做 Key 名、不限额度、无有效期,拿到 key 后弹结果框让用户复制。
@@ -221,7 +346,7 @@ export default function Home() {
     label: string,
     current: string,
     setter: (v: string) => void,
-    options: { value: string; label: string }[],
+    options: { value: string; label: string; icon?: React.ReactNode }[],
   ) => (
     <div className="model-filter-row">
       <span className="model-filter-label">{label}</span>
@@ -240,7 +365,14 @@ export default function Home() {
             checked={current === opt.value}
             onChange={() => setter(opt.value)}
           >
-            {opt.label}
+            {opt.icon ? (
+              <span className="model-chip-inner">
+                <span className="model-chip-icon">{opt.icon}</span>
+                {opt.label}
+              </span>
+            ) : (
+              opt.label
+            )}
           </Tag.CheckableTag>
         ))}
       </div>
@@ -249,44 +381,111 @@ export default function Home() {
 
   return (
     <PublicLayout>
-      {/* Hero */}
+      {/* Hero —— 左文右图。外层 .hero 只负责背景渐变+大 padding,
+          内层 .hero-inner 用 grid 把内容分成左 文字 / 右 轮播两列。
+          没有 banner 时给 .hero-inner--solo,grid 退化为单列、文字居中 */}
       <section className="hero">
-        <h1 className="hero-title">
-          一次接入,<span className="hero-highlight">所有主流 AI 模型</span>
-        </h1>
-        <p className="hero-sub">
-          AI Relay 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini
-          等模型;支持多币种计费、流式转发、细粒度成本控制。
-        </p>
-        {!user && (
-          <div className="hero-cta">
-            <Button
-              type="primary"
-              size="large"
-              onClick={() => history.push('/auth/register')}
-            >
-              免费注册
-            </Button>
-            <Button size="large" onClick={() => history.push('/auth/login')}>
-              已有账号,登录
-            </Button>
+        <div
+          className={
+            'hero-inner' + (banners.length === 0 ? ' hero-inner--solo' : '')
+          }
+        >
+          <div className="hero-left">
+            <h1 className="hero-title">
+              一次接入,<br />
+              <span className="hero-highlight">所有主流 AI 模型</span>
+            </h1>
+            <p className="hero-sub">
+              模桥 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini /
+              国内厂商等模型;支持多币种计费、流式转发、细粒度成本控制。
+            </p>
+            {!user && (
+              <div className="hero-cta">
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={() => history.push('/auth/register')}
+                >
+                  免费注册
+                </Button>
+                <Button size="large" onClick={() => history.push('/auth/login')}>
+                  已有账号,登录
+                </Button>
+              </div>
+            )}
+            <div className="hero-badges">
+              <div>
+                <span className="b-num">20+</span>内置模型
+              </div>
+              <div>
+                <span className="b-num">7+</span>主流厂商
+              </div>
+              <div>
+                <span className="b-num">5+</span>支持币种
+              </div>
+              <div>
+                <span className="b-num">99.9%</span>可用性目标
+              </div>
+            </div>
           </div>
-        )}
-        <div className="hero-badges">
-          <div>
-            <span className="b-num">20+</span>内置模型
-          </div>
-          <div>
-            <span className="b-num">7+</span>主流厂商
-          </div>
-          <div>
-            <span className="b-num">5+</span>支持币种
-          </div>
-          <div>
-            <span className="b-num">99.9%</span>可用性目标
-          </div>
+          {banners.length > 0 && (
+            <div className="hero-right">
+              <HeroCarousel banners={banners} />
+            </div>
+          )}
         </div>
       </section>
+
+      {/* 推荐模型 —— 从全部模型里挑前 4 个(带 recommended/new 标签优先),做轻量横向展示 */}
+      {!loading && recommended.length > 0 && (
+        <section className="featured-section">
+          <div className="featured-head">
+            <Typography.Title level={3} style={{ margin: 0 }}>
+              推荐模型
+            </Typography.Title>
+            <span className="featured-sub">主流厂商旗舰,即点即用</span>
+          </div>
+          <Row gutter={[16, 16]}>
+            {recommended.map((m) => {
+              const t = typeLabel[m.type];
+              return (
+                <Col key={m.id} xs={24} sm={12} md={12} lg={6}>
+                  <div className="featured-card" onClick={() => handleGenerate(m)}>
+                    <div className="featured-card-top">
+                      <div className="model-icon-wrap">
+                        <ProviderLogo provider={m.provider_type} size={26} />
+                      </div>
+                      <div className="featured-card-titles">
+                        <div className="featured-card-name">
+                          {m.display_name || m.name}
+                        </div>
+                        <div className="featured-card-provider">
+                          {providerLabel[m.provider_type] ?? m.provider_type}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="featured-card-meta">
+                      <span>
+                        {t?.icon} {t?.text ?? m.type}
+                      </span>
+                      <span>{fmtCtx(m.max_tokens)} 上下文</span>
+                    </div>
+                    <div className="featured-card-foot">
+                      <span className="featured-price">
+                        {fmtPrice(m.input_price)}
+                        <em> / M in</em>
+                      </span>
+                      <Button type="primary" size="small">
+                        生成 Key
+                      </Button>
+                    </div>
+                  </div>
+                </Col>
+              );
+            })}
+          </Row>
+        </section>
+      )}
 
       {/* 定价 + 选模型直出 Key */}
       <section id="pricing" className="pricing-page">
@@ -300,6 +499,17 @@ export default function Home() {
 
         {/* 过滤栏 */}
         <div className="model-filter-bar">
+          <div className="model-filter-row">
+            <span className="model-filter-label">搜索</span>
+            <Input
+              allowClear
+              prefix={<SearchOutlined style={{ color: '#bbb' }} />}
+              placeholder="按模型名、显示名或厂商搜索,如 kimi、claude、gpt-4"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              style={{ maxWidth: 480 }}
+            />
+          </div>
           {renderFilter(
             '类型',
             typeFilter,
@@ -307,6 +517,7 @@ export default function Home() {
             types.map((t) => ({
               value: t,
               label: typeLabel[t]?.text ?? t,
+              icon: typeLabel[t]?.icon,
             })),
           )}
           {renderFilter(
@@ -316,6 +527,7 @@ export default function Home() {
             providers.map((p) => ({
               value: p,
               label: providerLabel[p] ?? p,
+              icon: <ProviderLogo provider={p} size={14} />,
             })),
           )}
         </div>
@@ -331,19 +543,14 @@ export default function Home() {
           </div>
         ) : (
           <Row gutter={[20, 20]} style={{ marginTop: 8 }}>
-            {filtered.map((m) => {
+            {paged.map((m) => {
               const t = typeLabel[m.type];
               return (
                 <Col key={m.id} xs={24} md={12} xl={12}>
                   <div className="model-card">
                     <div className="model-card-header">
-                      <div
-                        className="model-icon"
-                        style={{
-                          background: providerInitialColor(m.provider_type),
-                        }}
-                      >
-                        {(m.provider_type || '?').slice(0, 1).toUpperCase()}
+                      <div className="model-icon-wrap">
+                        <ProviderLogo provider={m.provider_type} size={28} />
                       </div>
                       <div className="model-card-title">
                         <div className="model-card-name">
@@ -409,6 +616,29 @@ export default function Home() {
               );
             })}
           </Row>
+        )}
+
+        {!loading && filtered.length > pageSize && (
+          <div
+            style={{
+              marginTop: 28,
+              display: 'flex',
+              justifyContent: 'center',
+            }}
+          >
+            <Pagination
+              current={page}
+              pageSize={pageSize}
+              total={filtered.length}
+              showSizeChanger
+              pageSizeOptions={[4, 8, 12, 24]}
+              showTotal={(total) => `共 ${total} 个模型`}
+              onChange={(p, s) => {
+                setPage(p);
+                if (s !== pageSize) setPageSize(s);
+              }}
+            />
+          </div>
         )}
 
         <Paragraph

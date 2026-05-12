@@ -48,9 +48,38 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
     <div className="public-layout">
       <header className="public-header">
         <div className="public-header-inner">
-          <Link to="/" className="public-logo">
-            <span className="public-logo-dot" />
-            AI Relay
+          <Link to="/" className="public-logo" aria-label="模桥">
+            <svg
+              className="public-logo-icon"
+              viewBox="0 0 64 64"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <defs>
+                <linearGradient
+                  id="public-logo-grad"
+                  x1="0"
+                  y1="0"
+                  x2="64"
+                  y2="0"
+                  gradientUnits="userSpaceOnUse"
+                >
+                  <stop offset="0" stopColor="#5b9dff" />
+                  <stop offset="1" stopColor="#8654ff" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M 12 46 Q 32 12 52 46"
+                stroke="url(#public-logo-grad)"
+                strokeWidth="6"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <circle cx="12" cy="46" r="6" fill="#5b9dff" />
+              <circle cx="52" cy="46" r="6" fill="#8654ff" />
+              <circle cx="32" cy="20" r="3.5" fill="#8654ff" />
+            </svg>
+            模桥
           </Link>
           <nav className="public-nav">
             {navItems.map((n) => (
@@ -99,11 +128,31 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
 
       <footer className="public-footer">
         <div className="public-footer-inner">
-          <div>© {new Date().getFullYear()} AI Relay. 统一 AI API 中转服务。</div>
+          <div>© {new Date().getFullYear()} 模桥. 统一 AI API 中转服务。</div>
           <Space size="large">
-            <Link to="/#pricing">定价</Link>
+            {/* 直接用 <Link to="/#pricing"> 会:在非首页点击时只切到 /,因为 React Router
+                不会自动把 hash 滚动到目标元素 —— 给用户的感觉就是"白屏没反应"。
+                这里改成手动:先导航到 / (如果还不在),再在下一个 tick 滚到 #pricing。 */}
+            <a
+              href="/#pricing"
+              onClick={(e) => {
+                e.preventDefault();
+                const scrollToPricing = () => {
+                  const el = document.getElementById('pricing');
+                  el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                };
+                if (pathname === '/') {
+                  scrollToPricing();
+                } else {
+                  history.push('/');
+                  // 等首页组件渲染出 #pricing 区域;100ms 足够覆盖 antd Tag 等异步样式
+                  setTimeout(scrollToPricing, 120);
+                }
+              }}
+            >
+              定价
+            </a>
             <Link to="/docs">文档</Link>
-            <a href="https://github.com/" target="_blank" rel="noreferrer">GitHub</a>
           </Space>
         </div>
       </footer>

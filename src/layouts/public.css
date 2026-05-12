@@ -5,23 +5,37 @@
   background: #fafafa;
 }
 
+/* 顶部导航:做成悬浮的「灰玻璃药丸」——
+   .public-header 自身完全透明、只负责 sticky 定位和容器内边距,
+   药丸样式(模糊、边框、阴影、圆角)全部挂在 .public-header-inner 上。
+   pointer-events: none → auto 是为了让药丸两侧的透明区域不挡住下方内容(锚点/按钮等可点)。*/
 .public-header {
   position: sticky;
-  top: 0;
+  top: 12px;
   z-index: 10;
-  background: rgba(255, 255, 255, 0.85);
-  -webkit-backdrop-filter: saturate(180%) blur(14px);
-  backdrop-filter: saturate(180%) blur(14px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 12px 24px 0;
+  background: transparent;
+  border-bottom: none;
+  pointer-events: none;
 }
 
 .public-header-inner {
-  max-width: 1200px;
+  pointer-events: auto;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 14px 24px;
+  padding: 8px 20px 8px 22px;
   display: flex;
   align-items: center;
   gap: 32px;
+  border-radius: 999px;
+  background: rgba(244, 246, 249, 0.55);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 6px 24px rgba(20, 30, 60, 0.06),
+    0 2px 6px rgba(20, 30, 60, 0.04);
 }
 
 .public-logo {
@@ -39,6 +53,11 @@
   height: 10px;
   border-radius: 50%;
   background: linear-gradient(135deg, #5b9dff 0%, #8654ff 100%);
+}
+.public-logo-icon {
+  width: 26px;
+  height: 26px;
+  display: block;
 }
 
 .public-nav {
@@ -92,21 +111,48 @@
 }
 
 /* ===== Hero ===== */
+/* .hero 是外层 section,负责背景+大 padding;.hero-inner 才是真正的布局容器 */
 .hero {
   position: relative;
-  padding: 120px 24px 100px;
-  text-align: center;
+  padding: 120px 24px 80px;
   background:
     radial-gradient(60% 50% at 50% 30%, rgba(134, 84, 255, 0.12), transparent 70%),
     radial-gradient(40% 40% at 70% 60%, rgba(91, 157, 255, 0.18), transparent 70%);
 }
+/* 内层:左文右图 grid。最关键的两条规则就在这里 */
+.hero-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 40px;
+}
+/* 没有 banner 时退化为单列居中 —— 用单独的 class 避免 :has() 在 Safari 上的兼容问题 */
+.hero-inner.hero-inner--solo {
+  grid-template-columns: 1fr;
+  max-width: 760px;
+  text-align: center;
+}
+.hero-inner.hero-inner--solo .hero-left { text-align: center; }
+.hero-inner.hero-inner--solo .hero-sub { margin-left: auto; margin-right: auto; }
+.hero-inner.hero-inner--solo .hero-badges { justify-content: center; }
+.hero-left {
+  min-width: 0;
+  text-align: left;
+}
+.hero-right {
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
 .hero-title {
-  font-size: 56px;
+  font-size: 52px;
   line-height: 1.1;
   font-weight: 700;
   color: #111;
-  margin: 0 auto 20px;
-  max-width: 900px;
+  margin: 0 0 20px;
   letter-spacing: -0.02em;
 }
 .hero-highlight {
@@ -118,8 +164,8 @@
 .hero-sub {
   font-size: 18px;
   color: #555;
-  max-width: 680px;
-  margin: 0 auto 36px;
+  max-width: 540px;
+  margin: 0 0 32px;
   line-height: 1.6;
 }
 .hero-cta {
@@ -129,12 +175,132 @@
 .hero-badges {
   margin-top: 40px;
   display: flex;
-  justify-content: center;
-  gap: 48px;
+  justify-content: flex-start;
+  gap: 36px;
   flex-wrap: wrap;
   color: #666;
   font-size: 14px;
 }
+
+/* ===== 首页轮播图(HeroCarousel.tsx)===== */
+/* 容器固定宽高比 16:9,图片再大也撑不破布局,且第一帧绘制前就有空间 → 不会 CLS */
+.hero-carousel {
+  width: 100%;
+  max-width: 620px;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(20, 30, 60, 0.10), 0 2px 6px rgba(20, 30, 60, 0.06);
+  background: #f5f6f9;
+}
+.hero-carousel .ant-carousel,
+.hero-carousel .slick-slider,
+.hero-carousel .slick-list,
+.hero-carousel .slick-track,
+.hero-carousel .slick-slide,
+.hero-carousel .slick-slide > div {
+  height: 100%;
+}
+.hero-carousel-slide {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  cursor: default;
+  color: inherit;
+  text-decoration: none;
+}
+a.hero-carousel-slide { cursor: pointer; }
+.hero-carousel-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 底部渐变蒙层 + 标题副标 —— 仅在有文字时才看得见 */
+.hero-carousel-overlay {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 36px 20px 18px;
+  color: #fff;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.hero-carousel-overlay h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.hero-carousel-overlay p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.92;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 调一下 dots 颜色,白底图上原默认深色看不清 */
+.hero-carousel .slick-dots li button { background: rgba(255, 255, 255, 0.6); }
+.hero-carousel .slick-dots li.slick-active button { background: #fff; }
+
+/* ===== 推荐模型区 ===== */
+.featured-section {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 24px 0;
+}
+.featured-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.featured-sub { color: #888; font-size: 13px; }
+.featured-card {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.featured-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(22, 119, 255, 0.3);
+  box-shadow: 0 10px 28px rgba(22, 119, 255, 0.08);
+}
+.featured-card-top { display: flex; gap: 10px; align-items: center; }
+.featured-card-titles { flex: 1; min-width: 0; }
+.featured-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #111;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.featured-card-provider { font-size: 12px; color: #888; }
+.featured-card-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: #666;
+  flex-wrap: wrap;
+}
+.featured-card-meta .anticon { margin-right: 2px; }
+.featured-card-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.featured-price { font-weight: 600; color: #222; font-size: 14px; }
+.featured-price em { font-style: normal; color: #888; font-weight: 400; font-size: 12px; }
 .hero-badges .b-num {
   font-size: 28px;
   font-weight: 700;
@@ -279,6 +445,55 @@
   background: #1677ff;
   color: #fff;
 }
+.model-chip-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.model-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.model-chip-icon .anticon {
+  font-size: 13px;
+}
+
+/* 厂商官方 logo 图片 —— 尺寸由 inline style 控制,这里只管基本样式 */
+.provider-logo-img {
+  display: block;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #fff;
+}
+/* 选中状态(蓝底 chip)里给 logo 一点白底,深色 logo 在蓝底上还能看清 */
+.model-chip.ant-tag-checkable-checked .provider-logo-img {
+  padding: 1px;
+}
+/* 没有官方 logo 的兜底彩色首字母圆 */
+.provider-logo-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  flex-shrink: 0;
+  line-height: 1;
+}
+/* 模型卡片左上 logo 容器 —— 给一点统一的边框和留白,让大小不一的官方 logo 看上去更整齐 */
+.model-icon-wrap {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+}
 
 /* 模型卡片 */
 .model-card {
@@ -408,9 +623,25 @@
 }
 
 /* ===== Responsive ===== */
+/* 小笔记本/平板:hero 2 列改 1 列堆叠,地图缩小但保留 */
+@media (max-width: 900px) {
+  .hero { padding: 100px 24px 60px; }
+  .hero-inner {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .hero-left { text-align: center; }
+  .hero-sub { margin-left: auto; margin-right: auto; }
+  .hero-badges { justify-content: center; }
+  .hero-right { order: -1; }
+  .hero-carousel { max-width: 520px; }
+}
 @media (max-width: 640px) {
-  .hero-title { font-size: 40px; }
+  .hero-title { font-size: 38px; }
   .section-title { font-size: 28px; }
-  .public-header-inner { gap: 12px; padding: 10px 12px; }
+  .public-header { padding: 8px 10px 0; top: 8px; }
+  .public-header-inner { gap: 12px; padding: 6px 12px 6px 14px; border-radius: 28px; }
   .public-nav { gap: 14px; }
+  .hero-carousel { max-width: 100%; }
+  .featured-section { padding: 16px 16px 0; }
 }
