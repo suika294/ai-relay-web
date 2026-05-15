@@ -16,6 +16,7 @@ import {
   ProFormText,
 } from '@ant-design/pro-components';
 import { history, useModel } from '@umijs/max';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import {
   Button,
   Col,
@@ -180,6 +181,7 @@ const fmtPrice = (s: string) => {
 export default function Home() {
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
+  const site = useSiteInfo();
 
   const [list, setList] = useState<API.PublicModel[]>([]);
   const [banners, setBanners] = useState<API.Banner[]>([]);
@@ -381,13 +383,17 @@ export default function Home() {
 
   return (
     <PublicLayout>
-      {/* Hero —— 左文右图。外层 .hero 只负责背景渐变+大 padding,
-          内层 .hero-inner 用 grid 把内容分成左 文字 / 右 轮播两列。
-          没有 banner 时给 .hero-inner--solo,grid 退化为单列、文字居中 */}
-      <section className="hero">
+      {/* Hero —— 有 banner 时整块铺满背景轮播;无 banner 时退回纯文案居中。 */}
+      <section
+        className={
+          'hero home-hero' + (banners.length > 0 ? ' home-hero--with-banner' : '')
+        }
+      >
+        {banners.length > 0 && <HeroCarousel banners={banners} />}
         <div
           className={
-            'hero-inner' + (banners.length === 0 ? ' hero-inner--solo' : '')
+            'hero-inner' +
+            (banners.length === 0 ? ' hero-inner--solo' : ' hero-inner--banner')
           }
         >
           <div className="hero-left">
@@ -396,20 +402,26 @@ export default function Home() {
               <span className="hero-highlight">所有主流 AI 模型</span>
             </h1>
             <p className="hero-sub">
-              模桥 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini /
+              {site.name} 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini /
               国内厂商等模型;支持多币种计费、流式转发、细粒度成本控制。
             </p>
             {!user && (
               <div className="hero-cta">
+                {site.register_enabled && (
+                  <Button
+                    type="primary"
+                    size="large"
+                    onClick={() => history.push('/auth/register')}
+                  >
+                    免费注册
+                  </Button>
+                )}
                 <Button
-                  type="primary"
                   size="large"
-                  onClick={() => history.push('/auth/register')}
+                  type={site.register_enabled ? 'default' : 'primary'}
+                  onClick={() => history.push('/auth/login')}
                 >
-                  免费注册
-                </Button>
-                <Button size="large" onClick={() => history.push('/auth/login')}>
-                  已有账号,登录
+                  {site.register_enabled ? '已有账号,登录' : '登录'}
                 </Button>
               </div>
             )}
@@ -428,11 +440,6 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {banners.length > 0 && (
-            <div className="hero-right">
-              <HeroCarousel banners={banners} />
-            </div>
-          )}
         </div>
       </section>
 

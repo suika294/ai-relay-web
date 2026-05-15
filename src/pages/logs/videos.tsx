@@ -2,7 +2,7 @@ import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Tag, Typography } from 'antd';
 import { DownloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
 import { userApi } from '@/services/api';
-import { publicMediaURL } from '@/utils/media';
+import { browserDownloadName, publicMediaURL } from '@/utils/media';
 
 const { Text, Link } = Typography;
 
@@ -127,7 +127,10 @@ export default function VideoHistory() {
                         icon={<DownloadOutlined />}
                         href={url}
                         target="_blank"
-                        download={`video-${row.id}.mp4`}
+                        download={browserDownloadName(
+                          url,
+                          `video-${row.id}.mp4`,
+                        )}
                       >
                         下载
                       </Button>

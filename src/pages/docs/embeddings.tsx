@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocEmbeddings() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>向量 Embeddings</h1>
       <p>
-        模桥的向量接口与 OpenAI <code>/v1/embeddings</code> 协议一致,
+        {site.name}的向量接口与 OpenAI <code>/v1/embeddings</code> 协议一致,
         可以转发至 OpenAI <code>text-embedding-3</code> 系列、BGE、Qwen 等
         多家向量模型,常用于 RAG / 语义搜索 / 推荐 / 聚类等场景。
       </p>
@@ -22,7 +25,7 @@ export default function DocEmbeddings() {
   -H "Content-Type: application/json" \\
   -d '{
     "model": "text-embedding-3-small",
-    "input": "模桥是一个统一的 AI API 中转服务"
+    "input": "${site.name}是一个统一的 AI API 中转服务"
   }'`}
       />
 
@@ -93,7 +96,7 @@ export default function DocEmbeddings() {
         code={`{
   "model": "text-embedding-3-small",
   "input": [
-    "什么是模桥",
+    "什么是${site.name}",
     "如何创建 API Key",
     "支持哪些上游厂商"
   ]

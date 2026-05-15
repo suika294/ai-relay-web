@@ -119,6 +119,24 @@
     radial-gradient(60% 50% at 50% 30%, rgba(134, 84, 255, 0.12), transparent 70%),
     radial-gradient(40% 40% at 70% 60%, rgba(91, 157, 255, 0.18), transparent 70%);
 }
+.home-hero {
+  overflow: hidden;
+}
+.home-hero--with-banner {
+  min-height: 510px;
+  padding: 130px 24px 84px;
+  background: #10131c;
+}
+.home-hero--with-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.86) 34%, rgba(255, 255, 255, 0.26) 62%, rgba(255, 255, 255, 0.06) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.08) 42%, rgba(255, 255, 255, 0.72) 100%);
+}
 /* 内层:左文右图 grid。最关键的两条规则就在这里 */
 .hero-inner {
   max-width: 1200px;
@@ -133,6 +151,12 @@
   grid-template-columns: 1fr;
   max-width: 760px;
   text-align: center;
+}
+.hero-inner.hero-inner--banner {
+  position: relative;
+  z-index: 2;
+  grid-template-columns: minmax(0, 0.88fr) minmax(280px, 1fr);
+  min-height: 296px;
 }
 .hero-inner.hero-inner--solo .hero-left { text-align: center; }
 .hero-inner.hero-inner--solo .hero-sub { margin-left: auto; margin-right: auto; }
@@ -192,6 +216,15 @@
   box-shadow: 0 12px 32px rgba(20, 30, 60, 0.10), 0 2px 6px rgba(20, 30, 60, 0.06);
   background: #f5f6f9;
 }
+.home-hero--with-banner > .hero-carousel {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: #10131c;
+}
 .hero-carousel .ant-carousel,
 .hero-carousel .slick-slider,
 .hero-carousel .slick-list,
@@ -209,6 +242,10 @@
   color: inherit;
   text-decoration: none;
 }
+.home-hero--with-banner .hero-carousel-slide {
+  aspect-ratio: auto;
+  height: 100%;
+}
 a.hero-carousel-slide { cursor: pointer; }
 .hero-carousel-img {
   display: block;
@@ -223,6 +260,9 @@ a.hero-carousel-slide { cursor: pointer; }
   padding: 36px 20px 18px;
   color: #fff;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.home-hero--with-banner .hero-carousel-overlay {
+  display: none;
 }
 .hero-carousel-overlay h3 {
   margin: 0 0 4px;
@@ -626,9 +666,22 @@ a.hero-carousel-slide { cursor: pointer; }
 /* 小笔记本/平板:hero 2 列改 1 列堆叠,地图缩小但保留 */
 @media (max-width: 900px) {
   .hero { padding: 100px 24px 60px; }
+  .home-hero--with-banner {
+    min-height: 620px;
+    padding: 120px 24px 72px;
+  }
+  .home-hero--with-banner::after {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(255, 255, 255, 0.82) 48%, rgba(255, 255, 255, 0.22) 100%),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.08) 100%);
+  }
   .hero-inner {
     grid-template-columns: 1fr;
     gap: 24px;
+  }
+  .hero-inner.hero-inner--banner {
+    grid-template-columns: 1fr;
+    min-height: 0;
   }
   .hero-left { text-align: center; }
   .hero-sub { margin-left: auto; margin-right: auto; }
@@ -643,5 +696,9 @@ a.hero-carousel-slide { cursor: pointer; }
   .public-header-inner { gap: 12px; padding: 6px 12px 6px 14px; border-radius: 28px; }
   .public-nav { gap: 14px; }
   .hero-carousel { max-width: 100%; }
+  .home-hero--with-banner {
+    min-height: 560px;
+    padding: 104px 16px 56px;
+  }
   .featured-section { padding: 16px 16px 0; }
 }

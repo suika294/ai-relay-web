@@ -1,12 +1,14 @@
 import { Link } from '@umijs/max';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout, CodeBlock } from './_shared';
 
 export default function DocErrors() {
+  const site = useSiteInfo();
   return (
     <>
       <h1>错误码</h1>
       <p>
-        模桥沿用 OpenAI 风格的错误返回 —— HTTP 状态码 + JSON 错误体。
+        {site.name}沿用 OpenAI 风格的错误返回 —— HTTP 状态码 + JSON 错误体。
         本页列出所有可能遇到的错误码、原因和处置建议。
       </p>
 
@@ -131,7 +133,7 @@ export default function DocErrors() {
               </td>
               <td>服务内部错误</td>
               <td>
-                模桥侧异常。请稍后重试,若持续出现,带上响应里的{' '}
+                {site.name}侧异常。请稍后重试,若持续出现,带上响应里的{' '}
                 <code>id</code> 联系客服。
               </td>
             </tr>

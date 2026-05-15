@@ -1,25 +1,63 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Tag } from 'antd';
+import { useState } from 'react';
+import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { userApi } from '@/services/api';
 
 export default function Logs() {
+  // summary 跟随 ProTable 每次 request 一起刷新。loading 用独立 state 而不是复用 ProTable 的,
+  // 避免引入 actionRef + onLoad 把 request 拆成两半(与 admin UsageLogTable 同一做法)。
+  const [summary, setSummary] = useState<API.UsageLogSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  const successRate =
+    summary && summary.requests > 0
+      ? `${((summary.success / summary.requests) * 100).toFixed(1)}%`
+      : '—';
+  const stats: SummaryStat[] = [
+    {
+      label: '请求数',
+      value: summary?.requests ?? 0,
+      hint: summary ? `成功 ${summary.success} · 失败 ${summary.failure}` : undefined,
+    },
+    {
+      label: '成功率',
+      value: successRate,
+      tone:
+        summary && summary.requests > 0 && summary.failure / summary.requests > 0.1
+          ? 'danger'
+          : 'success',
+    },
+    { label: '总 tokens', value: summary?.total_tokens ?? 0 },
+    { label: '平均耗时', value: summary ? `${summary.avg_latency_ms}ms` : '—' },
+    { label: 'USD', value: summary ? `$${summary.usd_cost}` : '—' },
+  ];
+
   return (
     <PageContainer title="使用日志">
+      <SummaryBar stats={stats} loading={summaryLoading && !summary} />
       <ProTable<API.UsageLog>
         rowKey="id"
         request={async (params) => {
-          const res = await userApi.logs({
+          const filters = {
             page: params.current,
             size: params.pageSize,
             model: params.model,
             status: params.status,
             since: params.since,
             until: params.until,
-          });
+          };
+          setSummaryLoading(true);
+          const [listRes, sumRes] = await Promise.all([
+            userApi.logs(filters),
+            userApi.logsSummary(filters).catch(() => null),
+          ]);
+          setSummaryLoading(false);
+          if (sumRes?.code === 0 && sumRes.data) setSummary(sumRes.data);
           return {
-            data: res.data?.list ?? [],
-            total: res.data?.total ?? 0,
-            success: res.code === 0,
+            data: listRes.data?.list ?? [],
+            total: listRes.data?.total ?? 0,
+            success: listRes.code === 0,
           };
         }}
         columns={[

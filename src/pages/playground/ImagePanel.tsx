@@ -27,6 +27,7 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { browserDownloadName } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 
@@ -127,12 +128,226 @@ type ReferenceImage = {
   source: 'upload' | 'url';
 };
 
-const SIZE_OPTIONS = [
-  { value: '512x512', label: '512 × 512' },
-  { value: '1024x1024', label: '1024 × 1024' },
-  { value: '1024x1792', label: '1024 × 1792(竖)' },
-  { value: '1792x1024', label: '1792 × 1024(横)' },
-];
+// 控件清单按模型 family 切分。识别规则要跟后端 internal/provider/image_size.go 的
+// imageModelFamily 严格对齐 —— 同一个模型名两边必须落到同一族,否则前端给的合法值
+// 后端会再 clamp 一次,审计日志和上游收到的不一致。
+type ImageFamily =
+  | 'gpt-image-2'
+  | 'gpt-image-1'
+  | 'dalle-3'
+  | 'dalle-2'
+  | 'imagen'
+  | 'gemini-image'
+  | 'seedream-3'
+  | 'seedream-4-plus'
+  | 'cogview'
+  | 'unknown';
+
+// 与后端 imageModelFamily 一一对应。识别顺序敏感:
+//   - "gpt-image-2" 必须先于 "gpt-image" 判
+//   - "imagen" 必须先于 "gemini"+"image" 判(否则 imagen-3 会被吃成 gemini-image)
+function imageModelFamily(model?: string | null): ImageFamily {
+  const m = (model || '').toLowerCase().trim();
+  if (!m) return 'unknown';
+  if (m.includes('gpt-image-2')) return 'gpt-image-2';
+  if (m.includes('gpt-image')) return 'gpt-image-1';
+  if (m.includes('dall-e-3') || m.includes('dalle-3')) return 'dalle-3';
+  if (m.includes('dall-e-2') || m.includes('dalle-2')) return 'dalle-2';
+  if (m.includes('imagen')) return 'imagen';
+  if (m.includes('gemini') && m.includes('image')) return 'gemini-image';
+  if (m.includes('seedream-3') || m.includes('seedream3')) return 'seedream-3';
+  if (
+    m.includes('seedream-4') ||
+    m.includes('seedream4') ||
+    m.includes('seedream-5') ||
+    m.includes('seedream5')
+  )
+    return 'seedream-4-plus';
+  if (m.includes('cogview')) return 'cogview';
+  return 'unknown';
+}
+
+type SelectOpt = { value: string; label: string };
+
+type ControlsConfig = {
+  // size 选项;空数组表示该 family 不接 size 字段(Imagen / Gemini Image 用 aspectRatio + imageSize)
+  sizeOpts: SelectOpt[];
+  defaultSize?: string;
+  qualityOpts?: SelectOpt[];
+  defaultQuality?: string;
+  aspectOpts?: SelectOpt[];
+  defaultAspect?: string;
+  // K 档(1K/2K/4K 或 512):走 image_size 字段,Gemini 家族专用
+  imageSizeOpts?: SelectOpt[];
+  defaultImageSize?: string;
+  styleOpts?: SelectOpt[];
+  defaultStyle?: string;
+};
+
+// Seedream 4+ 上游要求总像素 ≥ 3,686,400(= 2560×1440)。下面 7 档都在合法窗口
+// 内,1920×1920 = 3,686,400 是踩着下限的方图,适合不想被纵横裁切的素材。
+const seedream4PlusControls: ControlsConfig = {
+  sizeOpts: [
+    { value: '2048x2048', label: '2048 × 2048(方,默认)' },
+    { value: '2560x1440', label: '2560 × 1440(横,2K)' },
+    { value: '1440x2560', label: '1440 × 2560(竖,2K)' },
+    { value: '1920x1920', label: '1920 × 1920(方,踩下限)' },
+    { value: '3840x2160', label: '3840 × 2160(横,4K)' },
+    { value: '2160x3840', label: '2160 × 3840(竖,4K)' },
+    { value: '4096x4096', label: '4096 × 4096(方,4K)' },
+  ],
+  defaultSize: '2048x2048',
+};
+
+const seedream3Controls: ControlsConfig = {
+  sizeOpts: [
+    { value: '512x512', label: '512 × 512' },
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '2048x2048', label: '2048 × 2048' },
+    { value: '1920x1080', label: '1920 × 1080(横)' },
+    { value: '1080x1920', label: '1080 × 1920(竖)' },
+  ],
+  defaultSize: '1024x1024',
+};
+
+const dalle3Controls: ControlsConfig = {
+  sizeOpts: [
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '1792x1024', label: '1792 × 1024(横)' },
+    { value: '1024x1792', label: '1024 × 1792(竖)' },
+  ],
+  defaultSize: '1024x1024',
+  qualityOpts: [
+    { value: 'standard', label: '标准(standard)' },
+    { value: 'hd', label: '高清(hd)' },
+  ],
+  styleOpts: [
+    { value: 'vivid', label: '鲜艳(vivid)' },
+    { value: 'natural', label: '自然(natural)' },
+  ],
+};
+
+const dalle2Controls: ControlsConfig = {
+  sizeOpts: [
+    { value: '256x256', label: '256 × 256' },
+    { value: '512x512', label: '512 × 512' },
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+  ],
+  defaultSize: '1024x1024',
+};
+
+const gptImage1Controls: ControlsConfig = {
+  sizeOpts: [
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '1536x1024', label: '1536 × 1024(横)' },
+    { value: '1024x1536', label: '1024 × 1536(竖)' },
+    { value: 'auto', label: '自动(auto)' },
+  ],
+  defaultSize: '1024x1024',
+  qualityOpts: [
+    { value: 'auto', label: '自动(auto)' },
+    { value: 'low', label: '低(low)' },
+    { value: 'medium', label: '中(medium)' },
+    { value: 'high', label: '高(high)' },
+  ],
+};
+
+// gpt-image-2 接受任意满足约束的 WxH。这里挑常见 1K/2K/4K 预设,后端 clamp 会处理边界。
+const gptImage2Controls: ControlsConfig = {
+  sizeOpts: [
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '2048x2048', label: '2048 × 2048(2K 方)' },
+    { value: '2048x1152', label: '2048 × 1152(2K 横 16:9)' },
+    { value: '1152x2048', label: '1152 × 2048(2K 竖 16:9)' },
+    { value: '3840x2160', label: '3840 × 2160(4K 横)' },
+    { value: '2160x3840', label: '2160 × 3840(4K 竖)' },
+    { value: 'auto', label: '自动(auto)' },
+  ],
+  defaultSize: '1024x1024',
+  defaultQuality: 'medium',
+  qualityOpts: [
+    { value: 'auto', label: '自动(auto)' },
+    { value: 'low', label: '低(low)' },
+    { value: 'medium', label: '中(medium)' },
+    { value: 'high', label: '高(high)' },
+  ],
+};
+
+const imagenControls: ControlsConfig = {
+  sizeOpts: [], // Imagen 不接 size,用 aspectRatio + imageSize 组合
+  aspectOpts: [
+    { value: '1:1', label: '1:1(方)' },
+    { value: '4:3', label: '4:3(横)' },
+    { value: '3:4', label: '3:4(竖)' },
+    { value: '16:9', label: '16:9(宽屏横)' },
+    { value: '9:16', label: '9:16(宽屏竖)' },
+  ],
+  defaultAspect: '1:1',
+  imageSizeOpts: [
+    { value: '1K', label: '1K(默认)' },
+    { value: '2K', label: '2K' },
+  ],
+  defaultImageSize: '1K',
+};
+
+const geminiImageControls: ControlsConfig = {
+  sizeOpts: [],
+  aspectOpts: [
+    { value: '1:1', label: '1:1' },
+    { value: '16:9', label: '16:9' },
+    { value: '9:16', label: '9:16' },
+    { value: '4:3', label: '4:3' },
+    { value: '3:4', label: '3:4' },
+    { value: '2:3', label: '2:3' },
+    { value: '3:2', label: '3:2' },
+    { value: '4:5', label: '4:5' },
+    { value: '5:4', label: '5:4' },
+    { value: '21:9', label: '21:9' },
+  ],
+  defaultAspect: '1:1',
+  imageSizeOpts: [
+    { value: '512', label: '512' },
+    { value: '1K', label: '1K(默认)' },
+    { value: '2K', label: '2K' },
+    { value: '4K', label: '4K' },
+  ],
+  defaultImageSize: '1K',
+};
+
+const cogviewControls: ControlsConfig = {
+  sizeOpts: [
+    { value: '512x512', label: '512 × 512' },
+    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '2048x2048', label: '2048 × 2048' },
+    { value: '1440x720', label: '1440 × 720' },
+    { value: '720x1440', label: '720 × 1440' },
+  ],
+  defaultSize: '1024x1024',
+};
+
+// 未识别族 —— 保留旧默认值,后端归一化兜底
+const unknownControls: ControlsConfig = {
+  sizeOpts: [
+    { value: '512x512', label: '512 × 512' },
+    { value: '1024x1024', label: '1024 × 1024' },
+    { value: '1024x1792', label: '1024 × 1792(竖)' },
+    { value: '1792x1024', label: '1792 × 1024(横)' },
+  ],
+  defaultSize: '1024x1024',
+};
+
+const CONTROLS_BY_FAMILY: Record<ImageFamily, ControlsConfig> = {
+  'gpt-image-2': gptImage2Controls,
+  'gpt-image-1': gptImage1Controls,
+  'dalle-3': dalle3Controls,
+  'dalle-2': dalle2Controls,
+  'imagen': imagenControls,
+  'gemini-image': geminiImageControls,
+  'seedream-3': seedream3Controls,
+  'seedream-4-plus': seedream4PlusControls,
+  'cogview': cogviewControls,
+  'unknown': unknownControls,
+};
 
 // 跟后端 imageRefMaxBytes 对齐(25MB)。上传前本地先拦一次,省一次往返。
 const IMAGE_REF_MAX_BYTES = 25 * 1024 * 1024;
@@ -218,7 +433,15 @@ export default function ImagePanel() {
   const [imageURL, setImageURL] = useState('');
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [size, setSize] = useState<string | undefined>('1024x1024');
+  const [quality, setQuality] = useState<string | undefined>(undefined);
+  const [style, setStyle] = useState<string | undefined>(undefined);
+  const [aspectRatio, setAspectRatio] = useState<string | undefined>(undefined);
+  const [imageSizeTier, setImageSizeTier] = useState<string | undefined>(undefined);
   const [n, setN] = useState(1);
+
+  // 当前模型对应的控件配置:决定下面 size / quality / aspect / imageSize / style
+  // 哪些 Select 出现、各自选项是什么。这里以 modelName 为唯一输入,纯派生。
+  const controls = CONTROLS_BY_FAMILY[imageModelFamily(modelName)];
 
   const [submitting, setSubmitting] = useState(false);
   const [uploadingRef, setUploadingRef] = useState(false);
@@ -269,6 +492,36 @@ export default function ImagePanel() {
   useEffect(() => {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
+
+  // 切模型时把 size / quality / aspect / imageSize / style 重置到目标 family 的默认值。
+  // 用 modelName 派生 family 而不是直接订阅 controls,避免 controls 引用每次渲染都新建造成
+  // effect 抖动死循环。空 family 不进来,等用户选完模型再走一次。
+  useEffect(() => {
+    if (!modelName) return;
+    const c = CONTROLS_BY_FAMILY[imageModelFamily(modelName)];
+    // size:落到当前 family 的合法选项里;若 family 不接 size(Imagen/Gemini)则清空
+    if (c.sizeOpts.length === 0) {
+      setSize(undefined);
+    } else {
+      setSize((prev) =>
+        prev && c.sizeOpts.some((o) => o.value === prev) ? prev : c.defaultSize,
+      );
+    }
+    // 其余字段:family 不支持就清空(避免把 vivid 发给 Seedream),支持但当前值不在选项里就给默认
+    const reconcile = (
+      value: string | undefined,
+      opts: SelectOpt[] | undefined,
+      def: string | undefined,
+    ): string | undefined => {
+      if (!opts || opts.length === 0) return undefined;
+      if (value && opts.some((o) => o.value === value)) return value;
+      return def;
+    };
+    setQuality((prev) => reconcile(prev, c.qualityOpts, c.defaultQuality));
+    setStyle((prev) => reconcile(prev, c.styleOpts, c.defaultStyle));
+    setAspectRatio((prev) => reconcile(prev, c.aspectOpts, c.defaultAspect));
+    setImageSizeTier((prev) => reconcile(prev, c.imageSizeOpts, c.defaultImageSize));
+  }, [modelName]);
 
   const selectedToken = tokens.find((t) => t.id === tokenId);
   const tokenAllowsModel =
@@ -437,12 +690,18 @@ export default function ImagePanel() {
     stopTimer();
 
     try {
+      // 只下发当前 family 实际支持的字段,避免把 vivid 发给 Seedream 这种情况。
+      // 模型推断和后端 imageModelFamily 对齐;后端还会再 NormalizeImageRequestSize 兜一次。
       const body: any = {
         model: modelName,
         prompt: prompt.trim(),
         n,
-        size,
       };
+      if (size) body.size = size;
+      if (quality) body.quality = quality;
+      if (style) body.style = style;
+      if (aspectRatio) body.aspect_ratio = aspectRatio;
+      if (imageSizeTier) body.image_size = imageSizeTier;
       const refs = referenceURLs();
       if (refs.length > 0) {
         body.images = refs;
@@ -576,17 +835,19 @@ export default function ImagePanel() {
               )}
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <div style={labelStyle}>尺寸</div>
-                <Select
-                  style={{ width: '100%' }}
-                  value={size}
-                  onChange={setSize}
-                  options={SIZE_OPTIONS}
-                  disabled={!!isInFlight || submitting}
-                />
-              </div>
-              <div style={{ width: 120 }}>
+              {controls.sizeOpts.length > 0 && (
+                <div style={{ flex: 1 }}>
+                  <div style={labelStyle}>尺寸</div>
+                  <Select
+                    style={{ width: '100%' }}
+                    value={size}
+                    onChange={setSize}
+                    options={controls.sizeOpts}
+                    disabled={!!isInFlight || submitting}
+                  />
+                </div>
+              )}
+              <div style={{ width: controls.sizeOpts.length > 0 ? 120 : '100%' }}>
                 <div style={labelStyle}>张数</div>
                 <Select
                   style={{ width: '100%' }}
@@ -597,6 +858,70 @@ export default function ImagePanel() {
                 />
               </div>
             </div>
+            {(controls.aspectOpts || controls.imageSizeOpts) && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                {controls.aspectOpts && (
+                  <div style={{ flex: 1 }}>
+                    <div style={labelStyle}>比例 (aspect_ratio)</div>
+                    <Select
+                      style={{ width: '100%' }}
+                      value={aspectRatio}
+                      onChange={setAspectRatio}
+                      options={controls.aspectOpts}
+                      allowClear
+                      placeholder="使用上游默认"
+                      disabled={!!isInFlight || submitting}
+                    />
+                  </div>
+                )}
+                {controls.imageSizeOpts && (
+                  <div style={{ flex: 1 }}>
+                    <div style={labelStyle}>分辨率档 (image_size)</div>
+                    <Select
+                      style={{ width: '100%' }}
+                      value={imageSizeTier}
+                      onChange={setImageSizeTier}
+                      options={controls.imageSizeOpts}
+                      allowClear
+                      placeholder="使用上游默认"
+                      disabled={!!isInFlight || submitting}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+            {(controls.qualityOpts || controls.styleOpts) && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                {controls.qualityOpts && (
+                  <div style={{ flex: 1 }}>
+                    <div style={labelStyle}>质量 (quality)</div>
+                    <Select
+                      style={{ width: '100%' }}
+                      value={quality}
+                      onChange={setQuality}
+                      options={controls.qualityOpts}
+                      allowClear
+                      placeholder="使用上游默认"
+                      disabled={!!isInFlight || submitting}
+                    />
+                  </div>
+                )}
+                {controls.styleOpts && (
+                  <div style={{ flex: 1 }}>
+                    <div style={labelStyle}>风格 (style)</div>
+                    <Select
+                      style={{ width: '100%' }}
+                      value={style}
+                      onChange={setStyle}
+                      options={controls.styleOpts}
+                      allowClear
+                      placeholder="使用上游默认"
+                      disabled={!!isInFlight || submitting}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <div style={labelStyle}>参考图(可选,图生图)</div>
               <Space.Compact style={{ width: '100%' }}>
@@ -848,7 +1173,10 @@ export default function ImagePanel() {
                             <span>图片 #{i + 1}</span>
                             <a
                               href={src}
-                              download={`image-${task.id}-${i}.png`}
+                              download={browserDownloadName(
+                                src,
+                                `image-${task.id}-${i}.png`,
+                              )}
                               target="_blank"
                               rel="noreferrer"
                               style={{ color: '#1677ff' }}

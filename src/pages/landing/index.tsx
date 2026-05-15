@@ -8,6 +8,7 @@ import {
 import { history, Link } from '@umijs/max';
 import { Button, Col, Row, Typography } from 'antd';
 import PublicLayout from '@/layouts/PublicLayout';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 
 const { Paragraph } = Typography;
 
@@ -40,6 +41,7 @@ const features = [
 ];
 
 export default function Landing() {
+  const site = useSiteInfo();
   return (
     <PublicLayout>
       {/* Hero */}
@@ -48,13 +50,15 @@ export default function Landing() {
           一次接入，<span className="hero-highlight">所有主流 AI 模型</span>
         </h1>
         <p className="hero-sub">
-          模桥 提供 OpenAI 兼容的统一 API，聚合 OpenAI / Anthropic / Gemini
+          {site.name} 提供 OpenAI 兼容的统一 API，聚合 OpenAI / Anthropic / Gemini
           等模型；支持多币种计费、流式转发、细粒度成本控制。
         </p>
         <div className="hero-cta">
-          <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
-            免费注册
-          </Button>
+          {site.register_enabled && (
+            <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
+              免费注册
+            </Button>
+          )}
           <Button size="large" onClick={() => history.push('/pricing-classic')}>
             查看定价
           </Button>
@@ -77,7 +81,7 @@ export default function Landing() {
 
       {/* Features */}
       <section className="section">
-        <h2 className="section-title">为什么选 模桥</h2>
+        <h2 className="section-title">为什么选 {site.name}</h2>
         <p className="section-sub">聚合、计费、转发、治理 —— 一个网关解决全部</p>
         <Row gutter={[24, 24]}>
           {features.map((f) => (
@@ -95,7 +99,7 @@ export default function Landing() {
       {/* Quickstart preview */}
       <section className="section" style={{ paddingTop: 0 }}>
         <h2 className="section-title">三行代码开始使用</h2>
-        <p className="section-sub">把 OpenAI 请求的 base_url 指向 模桥 即可</p>
+        <p className="section-sub">把 OpenAI 请求的 base_url 指向 {site.name} 即可</p>
         <Paragraph copyable code style={{ maxWidth: 780, margin: '0 auto', background: '#0f1117', padding: 20, borderRadius: 12, color: '#e7eaf3' }}>
           {`curl -N http://localhost:8080/v1/chat/completions \\
   -H "Authorization: Bearer sk-your-key" \\
@@ -109,10 +113,17 @@ export default function Landing() {
         <h2>准备好了吗？</h2>
         <p>注册账户即赠送试用额度，两分钟跑通首个请求</p>
         <div className="hero-cta">
-          <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
-            立即开始
-          </Button>
-          <Button size="large" ghost onClick={() => history.push('/docs')}>
+          {site.register_enabled && (
+            <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
+              立即开始
+            </Button>
+          )}
+          <Button
+            size="large"
+            ghost
+            type={site.register_enabled ? 'default' : 'primary'}
+            onClick={() => history.push('/docs')}
+          >
             阅读文档
           </Button>
         </div>

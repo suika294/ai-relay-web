@@ -27,6 +27,17 @@ export const userApi = {
     until?: string;
   }) =>
     request<API.Response<{ list: API.UsageLog[]; total: number }>>('/api/v1/user/logs', { params }),
+  // logsSummary 与 logs 同源筛选(model/status/since/until),返回 AdminSummary 形状。
+  // 给日志页头部 SummaryBar 用,每次 ProTable request 时与 logs 并行调。
+  logsSummary: (params: {
+    page?: number;
+    size?: number;
+    model?: string;
+    status?: number;
+    since?: string;
+    until?: string;
+  }) =>
+    request<API.Response<API.UsageLogSummary>>('/api/v1/user/logs/summary', { params }),
   stats: () => request<API.Response<API.UsageStats>>('/api/v1/user/usage/stats'),
   // 自己的视频/图像任务历史。返回结构对齐 /v1/videos/generations 的 VideoTaskView,
   // 字段 id / status / created_at / completed_at / data[] / error。
@@ -90,10 +101,16 @@ export const billingApi = {
       usd_amount: string;
       exchange_rate: string;
     }>>('/api/v1/recharge/orders', { method: 'POST', data }),
-  listOrders: (params: { page?: number; size?: number }) =>
+  listOrders: (params: { page?: number; size?: number; since?: string; until?: string }) =>
     request<API.Response<{ list: API.RechargeOrder[]; total: number }>>('/api/v1/recharge/orders', { params }),
-  records: (params: { page?: number; size?: number; type?: string }) =>
+  // ordersSummary 与 listOrders 同源时间窗,返回订单状态分布 + 已支付累计。
+  ordersSummary: (params: { since?: string; until?: string }) =>
+    request<API.Response<API.OrderSummary>>('/api/v1/recharge/orders/summary', { params }),
+  records: (params: { page?: number; size?: number; type?: string; since?: string; until?: string }) =>
     request<API.Response<{ list: API.BillingRecord[]; total: number }>>('/api/v1/billing/records', { params }),
+  // recordsSummary 与 records 同源过滤,返回 by_type 分组的笔数 + quota/usd 净变动。
+  recordsSummary: (params: { type?: string; since?: string; until?: string }) =>
+    request<API.Response<API.RecordsSummary>>('/api/v1/billing/records/summary', { params }),
   redeem: (code: string) =>
     request<API.Response<{ quota_amount: number }>>('/api/v1/redemption/redeem', {
       method: 'POST',
@@ -102,7 +119,7 @@ export const billingApi = {
 };
 
 export const systemApi = {
-  info: () => request<API.Response>('/api/v1/system/info'),
+  info: () => request<API.Response<API.SiteInfo>>('/api/v1/system/info'),
   currencies: () => request<API.Response<string[]>>('/api/v1/system/currencies'),
   models: () => request<API.Response<any[]>>('/api/v1/system/models'),
 };

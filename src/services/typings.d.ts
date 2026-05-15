@@ -115,6 +115,44 @@ declare namespace API {
     daily_trend: DailyPoint[];
   }
 
+  // —— 列表页头部摘要条 SummaryBar 用 ——
+
+  // UsageLogSummary 对齐后端 repository.AdminSummary,/api/v1/user/logs/summary 返回。
+  interface UsageLogSummary {
+    requests: number;
+    success: number;
+    failure: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    avg_latency_ms: number;
+    usd_cost: string;
+  }
+
+  // OrderSummary 对齐后端 repository.OrderSummary,/api/v1/recharge/orders/summary。
+  interface OrderSummary {
+    total: number;
+    paid: number;
+    pending: number;
+    refunded: number;
+    canceled: number;
+    failed: number;
+    paid_quota: number;
+    paid_usd: string;
+  }
+
+  // RecordsSummary 按 type 分组的账单流水汇总,/api/v1/billing/records/summary。
+  interface RecordsSummaryItem {
+    type: string;
+    count: number;
+    quota_total: number;
+    usd_total: string;
+  }
+  interface RecordsSummary {
+    total: number;
+    by_type: RecordsSummaryItem[];
+  }
+
   interface Balance {
     balance_quota: number;
     usd_amount: string;
@@ -172,6 +210,18 @@ declare namespace API {
     prompt?: string;
     data?: MediaTaskOutput[];
     error?: { code?: string; message: string };
+  }
+
+  // 站点信息(GET /system/info),启动时拉一次,驱动浏览器标题、
+  // 顶栏 logo/名称、注册入口等。后端从 system_configs 读出。
+  interface SiteInfo {
+    name: string;
+    logo: string;
+    register_enabled: boolean;
+    version: string;
+    // 管理员在后台配置的 API base_url(留空代表"按当前域名兜底",
+    // 由前端 useApiBase hook 决定最终值)。
+    api_base: string;
   }
 
   // 我的素材

@@ -1,6 +1,8 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Alert, Image, Tag, Typography } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Image, Space, Tag, Typography } from 'antd';
 import { userApi } from '@/services/api';
+import { browserDownloadName } from '@/utils/media';
 
 const { Text } = Typography;
 
@@ -102,10 +104,24 @@ export default function ImageHistory() {
             return (
               <div style={{ padding: '6px 4px' }}>
                 {src && (
-                  <Image
-                    src={src}
-                    style={{ maxHeight: 420, borderRadius: 8 }}
-                  />
+                  <Space direction="vertical" size="small">
+                    <Image
+                      src={src}
+                      style={{ maxHeight: 420, borderRadius: 8 }}
+                    />
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      href={src}
+                      target="_blank"
+                      download={browserDownloadName(
+                        src,
+                        `image-${row.id}.png`,
+                      )}
+                    >
+                      下载
+                    </Button>
+                  </Space>
                 )}
                 {row.status === 'failed' && row.error && (
                   <Alert

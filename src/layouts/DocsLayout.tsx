@@ -27,7 +27,9 @@ export const docsGroups: DocGroup[] = [
       { to: '/docs/models', label: '模型列表' },
       { to: '/docs/images', label: '图像生成' },
       { to: '/docs/videos', label: '视频生成' },
+      { to: '/docs/audio', label: '语音 Audio' },
       { to: '/docs/embeddings', label: '向量 Embeddings' },
+      { to: '/docs/vectordb', label: '向量数据库' },
     ],
   },
   {

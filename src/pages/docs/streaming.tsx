@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock, TabbedCode } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function DocStreaming() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>流式响应</h1>
       <p>
-        给请求加上 <code>"stream": true</code> 即可让模桥以标准
+        给请求加上 <code>"stream": true</code> 即可让{site.name}以标准
         Server-Sent Events(SSE)协议逐 token 推送。所有兼容 OpenAI
         协议的客户端都能识别这种格式,无需额外适配。
       </p>
@@ -19,7 +22,7 @@ export default function DocStreaming() {
   -H "Content-Type: application/json" \\
   -d '{
     "model": "gpt-4o-mini",
-    "messages": [{"role":"user","content":"用一句话介绍模桥"}],
+    "messages": [{"role":"user","content":"用一句话介绍${site.name}"}],
     "stream": true
   }'`}
       />
@@ -166,7 +169,7 @@ while (true) {
       <h2>常见坑</h2>
       <Callout type="warn" title="反向代理把流缓冲了">
         <p style={{ margin: 0 }}>
-          如果你在 Nginx / 负载均衡 / Cloudflare 后面接模桥,需要确认它们
+          如果你在 Nginx / 负载均衡 / Cloudflare 后面接{site.name},需要确认它们
           对 <code>text/event-stream</code> 不做缓冲。Nginx 至少要加{' '}
           <code>proxy_buffering off;</code>{' '}和{' '}
           <code>proxy_cache off;</code>,否则会出现「等很久,然后一次性吐出全部」的现象。
@@ -176,7 +179,7 @@ while (true) {
       <Callout type="warn" title="客户端要持续读">
         <p style={{ margin: 0 }}>
           流式请求是长连接,客户端必须持续读取直到 <code>[DONE]</code>。
-          如果中途断开连接,模桥会继续向上游发送(直到上游结束)
+          如果中途断开连接,{site.name}会继续向上游发送(直到上游结束)
           以避免计费遗漏,所以「断开 ≠ 停止扣费」,需要注意。
         </p>
       </Callout>

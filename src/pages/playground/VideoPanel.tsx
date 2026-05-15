@@ -29,6 +29,7 @@ import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
 import {
+  browserDownloadName,
   isAuthenticatedGeminiDownloadURL,
   publicMediaURL,
 } from '@/utils/media';
@@ -798,38 +799,45 @@ export default function VideoPanel() {
 
               {/* 成功:视频播放器 + 下载 */}
               {task.status === 'succeeded' && videoURL && (
-                <div>
-                  <div
-                    style={{
-                      color: '#52c41a',
-                      fontSize: 13,
-                      marginBottom: 10,
-                    }}
-                  >
-                    ✓ 生成完成{finalLatency ? ` · 用时 ${finalLatency}` : ''}
-                  </div>
-                  <video
-                    key={videoURL}
-                    src={videoURL}
-                    controls
-                    autoPlay
-                    style={{
-                      width: '100%',
-                      borderRadius: 10,
-                      background: '#000',
-                    }}
-                  />
-                  <div style={{ marginTop: 10, textAlign: 'right' }}>
-                    <a
-                      href={videoURL}
-                      download={`video-${task.id}.mp4`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Button icon={<DownloadOutlined />}>下载视频</Button>
-                    </a>
-                  </div>
-                </div>
+                (() => {
+                  return (
+                    <div>
+                      <div
+                        style={{
+                          color: '#52c41a',
+                          fontSize: 13,
+                          marginBottom: 10,
+                        }}
+                      >
+                        ✓ 生成完成{finalLatency ? ` · 用时 ${finalLatency}` : ''}
+                      </div>
+                      <video
+                        key={videoURL}
+                        src={videoURL}
+                        controls
+                        autoPlay
+                        style={{
+                          width: '100%',
+                          borderRadius: 10,
+                          background: '#000',
+                        }}
+                      />
+                      <div style={{ marginTop: 10, textAlign: 'right' }}>
+                        <a
+                          href={videoURL}
+                          download={browserDownloadName(
+                            videoURL,
+                            `video-${task.id}.mp4`,
+                          )}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          <Button icon={<DownloadOutlined />}>下载视频</Button>
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })()
               )}
 
               {task.status === 'succeeded' && !videoURL && (

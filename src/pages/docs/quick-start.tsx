@@ -1,14 +1,17 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock, TabbedCode } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function QuickStart() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>快速开始</h1>
       <p>
-        模桥(MoQiao)对外暴露与 OpenAI 完全兼容的 HTTP API,几乎所有支持
+        {site.name}对外暴露与 OpenAI 完全兼容的 HTTP API,几乎所有支持
         OpenAI 协议的 SDK / 第三方客户端都能直接接入,只需把 <code>base_url</code>{' '}
-        指向本服务,并使用模桥签发的 API Key。
+        指向本服务,并使用{site.name}签发的 API Key。
       </p>
 
       <Callout type="info" title="本页目标">
@@ -67,7 +70,7 @@ export default function QuickStart() {
     "model": "gpt-4o-mini",
     "messages": [
       {"role": "system", "content": "你是一名简洁的中文助手"},
-      {"role": "user", "content": "用一句话介绍模桥"}
+      {"role": "user", "content": "用一句话介绍${site.name}"}
     ]
   }'`,
           },
@@ -86,7 +89,7 @@ resp = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[
         {"role": "system", "content": "你是一名简洁的中文助手"},
-        {"role": "user", "content": "用一句话介绍模桥"},
+        {"role": "user", "content": "用一句话介绍${site.name}"},
     ],
 )
 print(resp.choices[0].message.content)`,
@@ -106,7 +109,7 @@ const resp = await client.chat.completions.create({
   model: 'gpt-4o-mini',
   messages: [
     { role: 'system', content: '你是一名简洁的中文助手' },
-    { role: 'user', content: '用一句话介绍模桥' },
+    { role: 'user', content: '用一句话介绍${site.name}' },
   ],
 });
 console.log(resp.choices[0].message.content);`,
@@ -128,7 +131,7 @@ console.log(resp.choices[0].message.content);`,
       "index": 0,
       "message": {
         "role": "assistant",
-        "content": "模桥是一个统一的 AI API 中转服务……"
+        "content": "${site.name}是一个统一的 AI API 中转服务……"
       },
       "finish_reason": "stop"
     }

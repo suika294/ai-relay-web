@@ -26,7 +26,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import { userApi } from '@/services/api';
-import { publicMediaURL } from '@/utils/media';
+import { browserDownloadName, publicMediaURL } from '@/utils/media';
 
 const { Text } = Typography;
 
@@ -308,18 +308,22 @@ function HistoryRow({
               </Button>
             )}
             {src && (
-              <Button
-                size="small"
-                type="link"
-                icon={<DownloadOutlined />}
-                href={src}
-                target="_blank"
-                download={
-                  kind === 'video' ? `video-${task.id}.mp4` : `image-${task.id}.png`
-                }
-              >
-                下载
-              </Button>
+              (() => {
+                const filename =
+                  kind === 'video' ? `video-${task.id}.mp4` : `image-${task.id}.png`;
+                return (
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<DownloadOutlined />}
+                    href={src}
+                    target="_blank"
+                    download={browserDownloadName(src, filename)}
+                  >
+                    下载
+                  </Button>
+                );
+              })()
             )}
             {task.prompt && onReuse && (
               <Button size="small" type="link" onClick={() => onReuse(task)}>

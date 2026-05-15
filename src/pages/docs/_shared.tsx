@@ -3,6 +3,7 @@
 // 子页都重写一份样式/复制逻辑。
 import { Tabs } from 'antd';
 import { useState, type ReactNode } from 'react';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 
 export function CodeBlock({
   lang,
@@ -93,6 +94,22 @@ export function TabbedCode({
   );
 }
 
-// 各子页统一引用同一个 API_BASE,以后切线上域名只改一处。
-// 注:模桥前端在 dev 把 /v1 反代到后端 8080;线上部署后,这里替换成实际网关 URL。
-export const API_BASE = 'http://localhost:8080/v1';
+// useApiBase —— 文档示例里展示的 API base_url。优先级:
+//   1. 后台 system_configs.site.api_base(管理员显式覆盖,改完即时生效)
+//   2. 构建时注入的 UMI_APP_API_BASE_URL(部署时按真实网关域名配置,见 .umirc.ts)
+//   3. 当前页面 origin(用户在浏览器看到什么域名,文档里就给什么域名,
+//      避免出现误导性的 localhost:8080)
+// 三档之间都自动去掉末尾的 / 后再拼 /v1,保证 curl 复制粘贴能直接跑。
+//
+// 注:这里必须是 hook 而不是 const —— const 在模块加载时求值,那时 siteInfo
+// 还没拉回来;hook 每次渲染读 initialState,后台改完刷新页面就能看到。
+export function useApiBase(): string {
+  const site = useSiteInfo();
+  if (site.api_base) return site.api_base.replace(/\/+$/, '') + '/v1';
+  const fromEnv = process.env.UMI_APP_API_BASE_URL;
+  if (fromEnv) return fromEnv.replace(/\/+$/, '') + '/v1';
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin + '/v1';
+  }
+  return '/v1';
+}

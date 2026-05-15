@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocAuth() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>认证</h1>
       <p>
-        模桥所有 <code>/v1/*</code> 接口均需要鉴权,使用标准的 <code>Bearer</code>{' '}
+        {site.name}所有 <code>/v1/*</code> 接口均需要鉴权,使用标准的 <code>Bearer</code>{' '}
         Token 方式。一个账户可以创建多把 Key,每把 Key 可以独立绑定模型范围、
         消耗上限和有效期。
       </p>

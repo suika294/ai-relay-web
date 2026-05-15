@@ -2,12 +2,14 @@ import { DownOutlined, LogoutOutlined, SettingOutlined, UserOutlined } from '@an
 import { history, Link, useLocation, useModel } from '@umijs/max';
 import { Avatar, Button, Dropdown, type MenuProps, Space } from 'antd';
 import type { ReactNode } from 'react';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import './public.css';
 
 export default function PublicLayout({ children }: { children: ReactNode }) {
   const { initialState, setInitialState } = useModel('@@initialState');
   const { pathname } = useLocation();
   const user = initialState?.currentUser;
+  const site = useSiteInfo();
 
   const navItems = [
     { to: '/', label: '首页' },
@@ -48,38 +50,47 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
     <div className="public-layout">
       <header className="public-header">
         <div className="public-header-inner">
-          <Link to="/" className="public-logo" aria-label="模桥">
-            <svg
-              className="public-logo-icon"
-              viewBox="0 0 64 64"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
-            >
-              <defs>
-                <linearGradient
-                  id="public-logo-grad"
-                  x1="0"
-                  y1="0"
-                  x2="64"
-                  y2="0"
-                  gradientUnits="userSpaceOnUse"
-                >
-                  <stop offset="0" stopColor="#5b9dff" />
-                  <stop offset="1" stopColor="#8654ff" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M 12 46 Q 32 12 52 46"
-                stroke="url(#public-logo-grad)"
-                strokeWidth="6"
-                strokeLinecap="round"
-                fill="none"
+          <Link to="/" className="public-logo" aria-label={site.name}>
+            {site.logo ? (
+              <img
+                className="public-logo-icon"
+                src={site.logo}
+                alt=""
+                aria-hidden="true"
               />
-              <circle cx="12" cy="46" r="6" fill="#5b9dff" />
-              <circle cx="52" cy="46" r="6" fill="#8654ff" />
-              <circle cx="32" cy="20" r="3.5" fill="#8654ff" />
-            </svg>
-            模桥
+            ) : (
+              <svg
+                className="public-logo-icon"
+                viewBox="0 0 64 64"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <defs>
+                  <linearGradient
+                    id="public-logo-grad"
+                    x1="0"
+                    y1="0"
+                    x2="64"
+                    y2="0"
+                    gradientUnits="userSpaceOnUse"
+                  >
+                    <stop offset="0" stopColor="#5b9dff" />
+                    <stop offset="1" stopColor="#8654ff" />
+                  </linearGradient>
+                </defs>
+                <path
+                  d="M 12 46 Q 32 12 52 46"
+                  stroke="url(#public-logo-grad)"
+                  strokeWidth="6"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+                <circle cx="12" cy="46" r="6" fill="#5b9dff" />
+                <circle cx="52" cy="46" r="6" fill="#8654ff" />
+                <circle cx="32" cy="20" r="3.5" fill="#8654ff" />
+              </svg>
+            )}
+            {site.name}
           </Link>
           <nav className="public-nav">
             {navItems.map((n) => (
@@ -115,9 +126,11 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
                 <Button type="text" onClick={() => history.push('/auth/login')}>
                   登录
                 </Button>
-                <Button type="primary" onClick={() => history.push('/auth/register')}>
-                  免费注册
-                </Button>
+                {site.register_enabled && (
+                  <Button type="primary" onClick={() => history.push('/auth/register')}>
+                    免费注册
+                  </Button>
+                )}
               </>
             )}
           </Space>
@@ -128,7 +141,7 @@ export default function PublicLayout({ children }: { children: ReactNode }) {
 
       <footer className="public-footer">
         <div className="public-footer-inner">
-          <div>© {new Date().getFullYear()} 模桥. 统一 AI API 中转服务。</div>
+          <div>© {new Date().getFullYear()} {site.name}. 统一 AI API 中转服务。</div>
           <Space size="large">
             {/* 直接用 <Link to="/#pricing"> 会:在非首页点击时只切到 /,因为 React Router
                 不会自动把 hash 滚动到目标元素 —— 给用户的感觉就是"白屏没反应"。

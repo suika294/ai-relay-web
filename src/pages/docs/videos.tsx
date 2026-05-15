@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock, TabbedCode } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function DocVideos() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>视频生成</h1>
       <p>
-        模桥已聚合 Google Veo、Doubao Seedance、Kling(可灵)、Vidu 等主流视频
+        {site.name}已聚合 Google Veo、Doubao Seedance、Kling(可灵)、Vidu 等主流视频
         模型,统一通过 OpenAI 风格的 <code>/v1/videos/generations</code>{' '}
         异步任务接口暴露:你 <strong>提交</strong> 一个任务拿到 <code>task_id</code>,
         然后 <strong>轮询</strong> 直到任务进入终态(<code>succeeded</code> /
@@ -17,7 +20,7 @@ export default function DocVideos() {
       <Callout type="info" title="视频生成是异步任务">
         <p style={{ margin: 0 }}>
           视频模型生成时间从十几秒到几分钟不等,所以接口设计成<strong>提交 + 轮询</strong>两步,
-          不像 chat 那样一次性返回。生成成功后,模桥会把上游临时 URL 转存到自家
+          不像 chat 那样一次性返回。生成成功后,{site.name}会把上游临时 URL 转存到自家
           storage,返回的 URL 一般可在 7 天内访问。
         </p>
       </Callout>
@@ -112,7 +115,7 @@ export default function DocVideos() {
               <td>string</td>
               <td>
                 图生视频(i2v)时的参考图 URL,需要公网可达。传 <code>http(s)://</code> 链接、
-                <code>data:image/...;base64,...</code> 或裸 base64 均可,模桥会按上游要求
+                <code>data:image/...;base64,...</code> 或裸 base64 均可,{site.name}会按上游要求
                 自动转换。
               </td>
             </tr>
@@ -132,7 +135,7 @@ export default function DocVideos() {
               </td>
               <td>array</td>
               <td>
-                通过 <code>/v1/files</code> 或控制台上传过的素材 ID,模桥从 storage 直读
+                通过 <code>/v1/files</code> 或控制台上传过的素材 ID,{site.name}从 storage 直读
                 原图后转交上游,适合本地/私有图片不方便外网访问的场景。可与{' '}
                 <code>image_url</code> 混用,顺序对齐。
               </td>
@@ -356,7 +359,7 @@ while (true) {
 
       <Callout type="info" title="参考图来源建议">
         <p style={{ margin: 0 }}>
-          公网可达的 HTTP(S) URL 最稳;模桥会优先透传 URL,避免大体积 base64 上行慢。
+          公网可达的 HTTP(S) URL 最稳;{site.name}会优先透传 URL,避免大体积 base64 上行慢。
           本地 / 私有 / 不公开的图建议先用{' '}
           <Link to="/docs/sdk">/v1/files</Link>{' '}
           上传,再用 <code>image_asset_ids</code> 引用 —— 比 base64 内联更高效,
@@ -397,7 +400,7 @@ while (true) {
                 <code>kling-v3-omni</code>
               </td>
               <td>
-                可灵 V3 Omni,**走单独的 omni-video 端点**,模桥已自动路由。支持多参考图
+                可灵 V3 Omni,**走单独的 omni-video 端点**,{site.name}已自动路由。支持多参考图
                 (image_list),适合复杂分镜场景。
               </td>
             </tr>
@@ -436,7 +439,7 @@ while (true) {
           1 分钟以上没动可以取消重试,或换一个同类型模型。
         </li>
         <li>
-          <strong>返回 URL 过期</strong> —— 模桥转存后的 URL 一般 7 天内有效;
+          <strong>返回 URL 过期</strong> —— {site.name}转存后的 URL 一般 7 天内有效;
           长期保存请尽快下载到自家存储。
         </li>
       </ul>

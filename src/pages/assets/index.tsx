@@ -63,6 +63,14 @@ export default function UserAssetsPage() {
               >
                 复制 URL
               </Button>
+              <Button
+                size="small"
+                href={url}
+                target="_blank"
+                style={{ marginLeft: 8 }}
+              >
+                下载
+              </Button>
             </div>
           </div>
         ),
@@ -71,7 +79,16 @@ export default function UserAssetsPage() {
       Modal.info({
         title: asset.filename || asset.object_key,
         width: 900,
-        content: <video src={url} controls style={{ width: '100%' }} />,
+        content: (
+          <div>
+            <video src={url} controls style={{ width: '100%' }} />
+            <div style={{ marginTop: 12 }}>
+              <Button size="small" href={url} target="_blank">
+                下载
+              </Button>
+            </div>
+          </div>
+        ),
       });
     } else {
       window.open(url, '_blank');

@@ -21,10 +21,35 @@ import {
   Typography,
 } from 'antd';
 import { useRef, useState } from 'react';
+import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
 
 export default function Recharge() {
   const orderRef = useRef<ActionType>();
+
+  // 订单 SummaryBar:与 ProTable 同源时间窗,每次 request 时与 listOrders 并行调。
+  const [summary, setSummary] = useState<API.OrderSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  const summaryStats: SummaryStat[] = [
+    {
+      label: '总订单',
+      value: summary?.total ?? 0,
+      hint: summary ? `待支付 ${summary.pending} · 已退款 ${summary.refunded}` : undefined,
+    },
+    {
+      label: '已支付',
+      value: summary?.paid ?? 0,
+      tone: 'success',
+    },
+    {
+      label: '失败 / 取消',
+      value: summary ? summary.failed + summary.canceled : 0,
+      tone: summary && summary.failed + summary.canceled > 0 ? 'danger' : 'default',
+    },
+    { label: '已支付 USD', value: summary ? `$${summary.paid_usd}` : '—' },
+    { label: '已支付 Quota', value: summary?.paid_quota ?? 0 },
+  ];
 
   // ---- 充值（走 ModalForm）----
   const handlePay = async (values: { amount: number; currency: string; method: string }) => {
@@ -130,6 +155,7 @@ export default function Recharge() {
 
   return (
     <PageContainer ghost header={{ title: '' }}>
+      <SummaryBar stats={summaryStats} loading={summaryLoading && !summary} />
       <ProCard
         title="充值订单"
         extra={headerActions}
@@ -139,27 +165,46 @@ export default function Recharge() {
         <ProTable<API.RechargeOrder>
           rowKey="id"
           actionRef={orderRef}
-          search={false}
+          search={{ labelWidth: 'auto' }}
           ghost
           request={async (params) => {
-            const res = await billingApi.listOrders({
+            const filters = {
               page: params.current,
               size: params.pageSize,
-            });
+              since: params.since,
+              until: params.until,
+            };
+            setSummaryLoading(true);
+            const [listRes, sumRes] = await Promise.all([
+              billingApi.listOrders(filters),
+              billingApi.ordersSummary({ since: filters.since, until: filters.until }).catch(
+                () => null,
+              ),
+            ]);
+            setSummaryLoading(false);
+            if (sumRes?.code === 0 && sumRes.data) setSummary(sumRes.data);
             return {
-              data: res.data?.list ?? [],
-              total: res.data?.total ?? 0,
-              success: res.code === 0,
+              data: listRes.data?.list ?? [],
+              total: listRes.data?.total ?? 0,
+              success: listRes.code === 0,
             };
           }}
           columns={[
-            { title: '订单号', dataIndex: 'order_no', ellipsis: true, copyable: true, width: 260 },
-            { title: '金额', render: (_, r) => `${r.amount} ${r.currency}` },
-            { title: 'Quota', dataIndex: 'quota_amount' },
-            { title: '支付方式', dataIndex: 'payment_method' },
+            {
+              title: '订单号',
+              dataIndex: 'order_no',
+              ellipsis: true,
+              copyable: true,
+              width: 260,
+              search: false,
+            },
+            { title: '金额', search: false, render: (_, r) => `${r.amount} ${r.currency}` },
+            { title: 'Quota', dataIndex: 'quota_amount', search: false },
+            { title: '支付方式', dataIndex: 'payment_method', search: false },
             {
               title: '状态',
               dataIndex: 'status',
+              search: false,
               valueEnum: {
                 0: { text: '待支付', status: 'Default' },
                 1: { text: '已支付', status: 'Success' },
@@ -168,7 +213,9 @@ export default function Recharge() {
                 4: { text: '失败', status: 'Error' },
               },
             },
-            { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime' },
+            { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime', search: false },
+            { title: '开始时间', dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
+            { title: '结束时间', dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
           ]}
         />
       </ProCard>

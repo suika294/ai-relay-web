@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { Callout, CodeBlock } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocRateLimits() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>限速</h1>
       <p>
-        为了保护上游稳定性、避免单一用户挤占资源,模桥在多个维度上做了限速。
+        为了保护上游稳定性、避免单一用户挤占资源,{site.name}在多个维度上做了限速。
         本页帮你理解触发原因、读懂返回头、设计合理的退避策略。
       </p>
 
@@ -23,7 +26,7 @@ export default function DocRateLimits() {
           <strong>并发数</strong>:同一时刻在途请求的最大数量。
         </li>
         <li>
-          <strong>上游侧限速</strong>:上游厂商对模桥账户做的限速,
+          <strong>上游侧限速</strong>:上游厂商对{site.name}账户做的限速,
           会被透传回来,具体阈值因模型而异。
         </li>
       </ul>
@@ -120,7 +123,7 @@ export default function DocRateLimits() {
         code={`import time, random
 from openai import OpenAI, RateLimitError
 
-client = OpenAI(api_key="sk-your-key", base_url="http://localhost:8080/v1")
+client = OpenAI(api_key="sk-your-key", base_url="${API_BASE}")
 
 def call_with_retry(**kwargs):
     for attempt in range(5):

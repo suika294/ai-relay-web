@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocModels() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>模型列表</h1>
       <p>
-        模桥已聚合 OpenAI、Anthropic、Google Gemini、DeepSeek、Qwen、GLM、
+        {site.name}已聚合 OpenAI、Anthropic、Google Gemini、DeepSeek、Qwen、GLM、
         Moonshot 等多家厂商的主流模型。可以通过{' '}
         <Link to="/#pricing">首页定价</Link>{' '}
         浏览全部模型与价格,或调用 <code>/v1/models</code> 接口拉取。
@@ -60,12 +63,12 @@ export default function DocModels() {
       <h2>模型 ID 命名规则</h2>
       <ul>
         <li>
-          上游厂商已经公布的官方模型,模桥保留原 ID,例如{' '}
+          上游厂商已经公布的官方模型,{site.name}保留原 ID,例如{' '}
           <code>gpt-4o-mini</code>、<code>claude-3-5-sonnet</code>、
           <code>deepseek-chat</code>、<code>qwen-max</code>。
         </li>
         <li>
-          少数情况下,同名模型在不同上游之间有差异,模桥会在 ID 后加后缀区分,
+          少数情况下,同名模型在不同上游之间有差异,{site.name}会在 ID 后加后缀区分,
           例如 <code>kimi-code</code>、<code>glm-code</code>。
         </li>
         <li>
@@ -74,7 +77,7 @@ export default function DocModels() {
       </ul>
 
       <h2>模型类型</h2>
-      <p>模桥按用途把模型分为以下几类:</p>
+      <p>{site.name}按用途把模型分为以下几类:</p>
       <div className="docs-table-wrap">
         <table>
           <thead>
@@ -137,9 +140,13 @@ export default function DocModels() {
                 <code>audio</code>
               </td>
               <td>
-                <code>/v1/audio/*</code>
+                <code>/v1/audio/transcriptions</code> ·{' '}
+                <code>/v1/audio/speech</code>
               </td>
-              <td>语音转写 / 合成,接口对齐 OpenAI 同名端点。</td>
+              <td>
+                语音转写 / 合成,接口对齐 OpenAI 同名端点;详见{' '}
+                <Link to="/docs/audio">语音 Audio</Link>。
+              </td>
             </tr>
             <tr>
               <td>

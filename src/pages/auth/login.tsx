@@ -2,6 +2,7 @@ import { LockOutlined, MailOutlined } from '@ant-design/icons';
 import { LoginForm, ProFormText } from '@ant-design/pro-components';
 import { Link, useSearchParams } from '@umijs/max';
 import { Alert, message } from 'antd';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { authApi } from '@/services/api';
 import { safeRedirect } from '@/utils/auth';
 
@@ -9,6 +10,7 @@ export default function Login() {
   const [params] = useSearchParams();
   const target = safeRedirect(params.get('redirect'));
   const showRedirectHint = !!params.get('redirect') && !target.startsWith('/auth/');
+  const site = useSiteInfo();
 
   return (
     <div style={{ paddingTop: 80, minHeight: '100vh', background: '#f5f6fa' }}>
@@ -18,8 +20,8 @@ export default function Login() {
         </Link>
       </div>
       <LoginForm
-        logo={<img src="/logo.svg" alt="aihubmax" />}
-        title="aihubmax"
+        logo={<img src={site.logo || '/logo.svg'} alt={site.name} />}
+        title={site.name}
         subTitle="使用邮箱登录"
         message={
           showRedirectHint ? (
@@ -62,15 +64,17 @@ export default function Login() {
           placeholder="密码"
           rules={[{ required: true, message: '请输入密码' }]}
         />
-        <div style={{ marginBottom: 24, textAlign: 'right' }}>
-          <Link
-            to={`/auth/register${
-              params.get('redirect') ? `?redirect=${params.get('redirect')}` : ''
-            }`}
-          >
-            注册账号
-          </Link>
-        </div>
+        {site.register_enabled && (
+          <div style={{ marginBottom: 24, textAlign: 'right' }}>
+            <Link
+              to={`/auth/register${
+                params.get('redirect') ? `?redirect=${params.get('redirect')}` : ''
+              }`}
+            >
+              注册账号
+            </Link>
+          </div>
+        )}
       </LoginForm>
     </div>
   );

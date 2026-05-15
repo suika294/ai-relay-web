@@ -1,13 +1,16 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock, TabbedCode } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function DocSdk() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>SDK 接入</h1>
       <p>
-        模桥兼容 OpenAI 协议,所以你可以直接使用各语言的 OpenAI 官方/社区 SDK
-        —— 不需要安装模桥的专属 SDK,只需要把 SDK 的 <code>base_url</code>{' '}
+        {site.name}兼容 OpenAI 协议,所以你可以直接使用各语言的 OpenAI 官方/社区 SDK
+        —— 不需要安装{site.name}的专属 SDK,只需要把 SDK 的 <code>base_url</code>{' '}
         指向 <code>{API_BASE}</code> 即可。
       </p>
 
@@ -184,7 +187,7 @@ Console.WriteLine(completion.Content[0].Text);`,
               <td>
                 <code>sk-your-key</code>
               </td>
-              <td>填入模桥控制台生成的 Key</td>
+              <td>填入{site.name}控制台生成的 Key</td>
             </tr>
             <tr>
               <td>Model</td>

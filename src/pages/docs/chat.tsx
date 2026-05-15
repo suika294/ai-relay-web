@@ -1,12 +1,15 @@
 import { Link } from '@umijs/max';
-import { API_BASE, Callout, CodeBlock } from './_shared';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
+import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocChat() {
+  const site = useSiteInfo();
+  const API_BASE = useApiBase();
   return (
     <>
       <h1>对话 Chat Completions</h1>
       <p>
-        模桥最核心的接口,行为与 OpenAI{' '}
+        {site.name}最核心的接口,行为与 OpenAI{' '}
         <code>/v1/chat/completions</code> 完全一致。所有上游厂商
         (Anthropic / Gemini / DeepSeek / Qwen / GLM ...)的对话能力都通过
         这个接口统一暴露。
@@ -175,6 +178,67 @@ export default function DocChat() {
         </li>
       </ul>
 
+      <h2 id="vision">图片输入 (Vision)</h2>
+      <p>
+        支持视觉理解的模型(GPT-4o / Claude 3.5 Sonnet / Gemini 1.5+ / Qwen-VL 等)可在
+        <code>messages[].content</code> 里以 <strong>数组</strong> 形式混合文字 + 图片。
+        语法与 OpenAI 完全一致,图片可以传 <strong>HTTP URL</strong>{' '}
+        或 <strong>data URL (base64 内联)</strong>。
+      </p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "model": "gpt-4o-mini",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "这张图里有什么?" },
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "https://example.com/photo.jpg"
+          }
+        }
+      ]
+    }
+  ]
+}`}
+      />
+      <CodeBlock
+        lang="json"
+        code={`{
+  "role": "user",
+  "content": [
+    { "type": "text", "text": "帮我读一下这张截图里的中文" },
+    {
+      "type": "image_url",
+      "image_url": {
+        "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."
+      }
+    }
+  ]
+}`}
+      />
+      <ul>
+        <li>
+          <strong>URL 与 base64 二选一</strong>:URL 必须公网可达(上游会自行下载);
+          base64 适合本地文件 / 隐私图片,但单图建议 ≤ 4MB,超过容易 413 / 超时。
+        </li>
+        <li>
+          <strong>多图</strong>:一个 <code>messages[]</code> 里可以塞多张图;一些模型
+          会对总像素 / 总张数有上限,详见上游官方文档。
+        </li>
+        <li>
+          <strong>计费</strong>:图片输入会按"image_input tokens"单独计费,与文本 token
+          分开记录在 <code>usage</code> 里。
+        </li>
+        <li>
+          需要"图像生成 / 图生图"的请走 <Link to="/docs/images">图像生成</Link> 接口
+          (<code>/v1/images/generations</code>),不要在 chat 里要求模型"生成一张图"。
+        </li>
+      </ul>
+
       <h2>请求示例</h2>
       <CodeBlock
         lang="bash"
@@ -277,7 +341,7 @@ export default function DocChat() {
 
       <Callout type="info" title="多轮对话">
         <p style={{ margin: 0 }}>
-          模桥本身不存对话历史 —— 每次请求都把完整 <code>messages</code>{' '}
+          {site.name}本身不存对话历史 —— 每次请求都把完整 <code>messages</code>{' '}
           发过来,服务端不会自动拼接。所以历史轮数由你侧维护,
           太长可以截断或本地做摘要再发。
         </p>

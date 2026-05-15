@@ -1,15 +1,17 @@
 import { Link } from '@umijs/max';
 import { Collapse } from 'antd';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout } from './_shared';
 
 export default function DocFaq() {
+  const site = useSiteInfo();
   const items = [
     {
       key: 'q-openai-compat',
-      label: '模桥跟 OpenAI 是什么关系?',
+      label: `${site.name}跟 OpenAI 是什么关系?`,
       children: (
         <p>
-          模桥是一个统一的 API 中转/聚合服务,自身不训练模型 ——
+          {site.name}是一个统一的 API 中转/聚合服务,自身不训练模型 ——
           所有调用都会按你请求里的 <code>model</code> 字段转发给对应上游
           (OpenAI、Anthropic、Google、DeepSeek、Qwen、GLM 等),
           并把响应原样回传给你。协议层完全兼容 OpenAI,所以可以直接用 OpenAI 官方 SDK。
@@ -53,7 +55,7 @@ export default function DocFaq() {
       children: (
         <>
           <p>
-            模桥会在「日志」中保留请求/响应的元数据(请求 ID、模型 ID、token 用量、
+            {site.name}会在「日志」中保留请求/响应的元数据(请求 ID、模型 ID、token 用量、
             状态码、耗时等)用于计费与排障;请求体 / 响应体明文是否落库取决于
             管理员配置,可按账户级别开关。
           </p>
@@ -71,7 +73,7 @@ export default function DocFaq() {
       children: (
         <>
           <p>
-            会。SSE 是长连接,客户端断开后模桥仍会等待上游把当前 token 流跑完,
+            会。SSE 是长连接,客户端断开后{site.name}仍会等待上游把当前 token 流跑完,
             按上游返回的最终 <code>usage</code> 扣费 —— 这是为了和上游的实际计费保持一致。
           </p>
           <p>
@@ -93,9 +95,9 @@ export default function DocFaq() {
       label: '不同地区的网络问题怎么办?',
       children: (
         <p>
-          模桥在出口侧已对接多个上游线路,理论上你只需要保证从你的客户端
-          能稳定连到模桥本身即可。如果在国内访问海外模型(OpenAI / Anthropic)
-          出现高延迟,推荐:在国内云上部署你的业务,通过国内出口访问模桥。
+          {site.name}在出口侧已对接多个上游线路,理论上你只需要保证从你的客户端
+          能稳定连到{site.name}本身即可。如果在国内访问海外模型(OpenAI / Anthropic)
+          出现高延迟,推荐:在国内云上部署你的业务,通过国内出口访问{site.name}。
         </p>
       ),
     },
@@ -139,7 +141,7 @@ export default function DocFaq() {
     },
     {
       key: 'q-incident',
-      label: '请求一直失败 / 怀疑模桥侧故障,怎么办?',
+      label: `请求一直失败 / 怀疑${site.name}侧故障,怎么办?`,
       children: (
         <>
           <p>排查顺序:</p>

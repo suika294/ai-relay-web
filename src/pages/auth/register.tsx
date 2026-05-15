@@ -1,12 +1,36 @@
 import { LoginForm, ProFormText } from '@ant-design/pro-components';
 import { history, Link, useSearchParams } from '@umijs/max';
-import { message } from 'antd';
+import { Button, Result, message } from 'antd';
+import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { authApi } from '@/services/api';
 import { safeRedirect } from '@/utils/auth';
 
 export default function Register() {
   const [params] = useSearchParams();
   const target = safeRedirect(params.get('redirect'));
+  const site = useSiteInfo();
+
+  // register.enabled=false 时整页禁用,而不是渲染表单 ——
+  // 让用户清楚是"暂不开放",而不是以为表单坏了。
+  if (!site.register_enabled) {
+    return (
+      <div style={{ paddingTop: 80, minHeight: '100vh', background: '#f5f6fa' }}>
+        <Result
+          status="info"
+          title="注册暂未开放"
+          subTitle={`${site.name} 当前关闭了新用户自助注册,如需账号请联系管理员。`}
+          extra={
+            <>
+              <Button type="primary" onClick={() => history.push('/auth/login')}>
+                去登录
+              </Button>
+              <Button onClick={() => history.push('/')}>返回首页</Button>
+            </>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingTop: 80, minHeight: '100vh', background: '#f5f6fa' }}>
@@ -16,8 +40,8 @@ export default function Register() {
         </Link>
       </div>
       <LoginForm
-        logo={<img src="/logo.svg" alt="aihubmax" />}
-        title="aihubmax"
+        logo={<img src={site.logo || '/logo.svg'} alt={site.name} />}
+        title={site.name}
         subTitle="注册新账户"
         submitter={{ searchConfig: { submitText: '创建账户并登录' } }}
         onFinish={async (values: any) => {

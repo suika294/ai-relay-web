@@ -1,7 +1,9 @@
 import {
   ClearOutlined,
+  CloseCircleFilled,
   DeleteOutlined,
   MessageOutlined,
+  PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
   SendOutlined,
@@ -36,6 +38,12 @@ type Role = 'system' | 'user' | 'assistant' | 'error';
 type Msg = {
   role: Role;
   content: string;
+  // images 仅 user 携带；存 data URL（base64），发送时按 OpenAI vision 格式拼成
+  // content 数组（text + image_url 多段）。空数组与 undefined 等价，发送走纯文本路径。
+  images?: string[];
+  // hadImages: 持久化到 localStorage 时被剥掉 base64 的标记(避免聊天历史撑爆配额);
+  // 仅控制 UI 在重载后显示 "图片未随会话保存" 提示,不影响发送(刷新后无法再用旧图发 i2i)。
+  hadImages?: number;
   // model 仅 assistant 与 error 两种消息携带：
   //   - assistant: 上游实际生成这条回复的模型（优先 response.data.model，否则发送时选的）
   //   - error:     失败请求当时尝试的模型，便于定位是谁家返回的错
@@ -43,6 +51,30 @@ type Msg = {
   model?: string;
   meta?: { code?: number | string; status?: number };
 };
+
+// 单张图上限 ~5MB（base64 后膨胀 ~33%，过大会塞爆 localStorage 与上游 token）
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAX_IMAGES_PER_MSG = 6;
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+// 把一条 user 消息按 OpenAI vision 协议拼成发给上游的 content 字段：
+//   - 没图：直接返回 string
+//   - 有图：数组 [{type:text}, ...{type:image_url}]
+function buildUserContent(text: string, images?: string[]): any {
+  if (!images || images.length === 0) return text;
+  const parts: any[] = [];
+  if (text) parts.push({ type: 'text', text });
+  for (const url of images) parts.push({ type: 'image_url', image_url: { url } });
+  return parts;
+}
 
 // 按模型名前缀推导品牌色 + 单字符 mark。同家子品牌（kimi/moonshot、glm/codegeex）归并。
 function modelBrand(name?: string): { color: string; letter: string } {
@@ -83,8 +115,45 @@ function loadSessions(): Session[] {
     return [];
   }
 }
+
+// 持久化前剥掉 image base64 —— 单张图 ≤5MB × base64 膨胀 33% × 单条最多 6 张 ×
+// 50 个会话 ≫ 浏览器 5–10MB 的 localStorage 配额。strippedSessions 只丢图片,文字
+// 历史与 hadImages 计数都留下,刷新后 UI 给出"图片未随会话保存"提示;当前会话内
+// 还活在内存里的图不受影响。
+function stripImagesFromSessions(list: Session[]): Session[] {
+  return list.map((s) => ({
+    ...s,
+    messages: s.messages.map((m) =>
+      m.images && m.images.length > 0
+        ? { ...m, images: undefined, hadImages: m.images.length }
+        : m,
+    ),
+  }));
+}
+
 function saveSessions(list: Session[]) {
-  localStorage.setItem(LS_SESSIONS, JSON.stringify(list.slice(0, 50)));
+  const stripped = stripImagesFromSessions(list.slice(0, 50));
+  const tries: Session[][] = [
+    stripped,
+    stripped.slice(0, 20),
+    stripped.slice(0, 5),
+    stripped.slice(0, 1),
+  ];
+  for (const candidate of tries) {
+    try {
+      localStorage.setItem(LS_SESSIONS, JSON.stringify(candidate));
+      return;
+    } catch {
+      // QuotaExceededError / SecurityError(隐私模式)→ 继续往下尝试更小批量。
+      // 不向上抛,避免在 setState updater 里炸断 React 渲染。
+    }
+  }
+  // 全失败:清掉旧值,让下一次 loadSessions 至少能拿到空数组而不是损坏的 JSON。
+  try {
+    localStorage.removeItem(LS_SESSIONS);
+  } catch {
+    /* 完全放弃 */
+  }
 }
 function newSession(): Session {
   const now = Date.now();
@@ -136,9 +205,61 @@ function ChatPanel() {
 
   // 输入框
   const [input, setInput] = useState('');
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 接收一批图片文件 -> 转 data URL -> 追加到 pendingImages。
+  // 在这里做大小/数量校验，给出 message 反馈；不抛错向上。
+  const addImages = async (files: FileList | File[] | null | undefined) => {
+    if (!files) return;
+    const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (arr.length === 0) return;
+    const remain = MAX_IMAGES_PER_MSG - pendingImages.length;
+    if (remain <= 0) {
+      message.warning(`单条最多 ${MAX_IMAGES_PER_MSG} 张图`);
+      return;
+    }
+    const accept = arr.slice(0, remain);
+    if (arr.length > remain) {
+      message.warning(`只接受前 ${remain} 张（单条最多 ${MAX_IMAGES_PER_MSG} 张）`);
+    }
+    const urls: string[] = [];
+    for (const f of accept) {
+      if (f.size > MAX_IMAGE_SIZE) {
+        message.warning(`${f.name || '图片'} 超过 5MB，已跳过`);
+        continue;
+      }
+      try {
+        urls.push(await readFileAsDataURL(f));
+      } catch {
+        message.error(`${f.name || '图片'} 读取失败`);
+      }
+    }
+    if (urls.length > 0) setPendingImages((prev) => [...prev, ...urls]);
+  };
+
+  const removePendingImage = (idx: number) => {
+    setPendingImages((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const it of Array.from(items)) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f && f.type.startsWith('image/')) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      void addImages(files);
+    }
+  };
 
   useEffect(() => {
     systemApi.models().then((res) => {
@@ -178,13 +299,18 @@ function ChatPanel() {
   const appendMessage = (m: Msg) => {
     updateCurrent((s) => {
       const msgs = [...s.messages, m];
+      const isFreshTitle = s.title === '新会话' || !s.title;
+      // 文字优先；纯图片消息也给个占位标题，不让侧栏显示"新会话"无法区分
+      let title = s.title;
+      if (isFreshTitle && m.role === 'user') {
+        if (m.content) title = truncate(m.content, 24);
+        else if (m.images && m.images.length > 0)
+          title = `[图片] x${m.images.length}`;
+      }
       return {
         ...s,
         messages: msgs,
-        title:
-          (s.title === '新会话' || !s.title) && m.role === 'user'
-            ? truncate(m.content, 24)
-            : s.title,
+        title,
         model: modelName || s.model,
         system,
         updatedAt: Date.now(),
@@ -265,7 +391,9 @@ function ChatPanel() {
   };
 
   const send = async () => {
-    if (!input.trim()) return;
+    const text = input.trim();
+    // 仅图片无文字也允许发送（图生文场景：直接问"这是什么"）
+    if (!text && pendingImages.length === 0) return;
     if (!modelName) {
       message.warning('请选择模型');
       return;
@@ -275,9 +403,14 @@ function ChatPanel() {
       return;
     }
 
-    const userMsg: Msg = { role: 'user', content: input.trim() };
+    const userMsg: Msg = {
+      role: 'user',
+      content: text,
+      images: pendingImages.length > 0 ? pendingImages : undefined,
+    };
     appendMessage(userMsg);
     setInput('');
+    setPendingImages([]);
     setLoading(true);
 
     // 请求发出即占位：content='' 的 assistant 气泡 + 捕获此刻的 model 名。
@@ -285,10 +418,15 @@ function ChatPanel() {
     const sentWith = modelName;
     appendMessage({ role: 'assistant', content: '', model: sentWith });
 
-    // 构造给上游的 messages：过滤 error / 空占位，映射 role 类型
+    // 构造给上游的 messages：过滤 error / 完全空（无文字也无图）的消息
+    // user 消息按 vision 协议拼 content（有图就走 parts 数组，否则 string）
     const history = [...messages, userMsg]
-      .filter((m) => m.role !== 'error' && m.content)
-      .map((m) => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content }));
+      .filter((m) => m.role !== 'error' && (m.content || (m.images && m.images.length > 0)))
+      .map((m) => ({
+        role: m.role as 'system' | 'user' | 'assistant',
+        content:
+          m.role === 'user' ? buildUserContent(m.content, m.images) : m.content,
+      }));
 
     const body = {
       model: modelName,
@@ -481,6 +619,30 @@ function ChatPanel() {
                       {chip}
                       <span>{m.role === 'assistant' ? m.model || 'assistant' : m.role}</span>
                     </div>
+                    {m.role === 'user' && m.images && m.images.length > 0 && (
+                      <div className="pg-msg-imgs">
+                        {m.images.map((src, k) => (
+                          <a
+                            key={k}
+                            href={src}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="pg-msg-img"
+                          >
+                            <img src={src} alt={`img-${k}`} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {m.role === 'user' &&
+                      !m.images &&
+                      typeof m.hadImages === 'number' &&
+                      m.hadImages > 0 && (
+                        <div className="pg-msg-img-missing">
+                          🖼️ 此消息附带的 {m.hadImages} 张图片未随会话保存(浏览器存储配额限制),
+                          刷新后无法在历史中查看,但当前会话内的发送已生效。
+                        </div>
+                      )}
                     {isPending ? (
                       <span className="pg-thinking">
                         思考中
@@ -501,10 +663,28 @@ function ChatPanel() {
           </div>
 
           <div className="pg-input-bar">
+            {pendingImages.length > 0 && (
+              <div className="pg-pending-imgs">
+                {pendingImages.map((src, k) => (
+                  <div key={k} className="pg-pending-img">
+                    <img src={src} alt={`pending-${k}`} />
+                    <button
+                      type="button"
+                      className="pg-pending-img-del"
+                      onClick={() => removePendingImage(k)}
+                      title="移除"
+                    >
+                      <CloseCircleFilled />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <TextArea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入消息；Ctrl/Cmd + Enter 发送"
+              onPaste={onPaste}
+              placeholder="输入消息；可粘贴/上传图片；Ctrl/Cmd + Enter 发送"
               autoSize={{ minRows: 2, maxRows: 6 }}
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -514,14 +694,36 @@ function ChatPanel() {
               }}
               disabled={loading}
             />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                void addImages(e.target.files);
+                // 同名文件再次选择也能触发 change
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+            />
             <Space style={{ marginTop: 8, width: '100%', justifyContent: 'space-between' }}>
-              <Button
-                icon={<ClearOutlined />}
-                onClick={clearCurrent}
-                disabled={messages.length === 0}
-              >
-                清空当前
-              </Button>
+              <Space>
+                <Button
+                  icon={<ClearOutlined />}
+                  onClick={clearCurrent}
+                  disabled={messages.length === 0}
+                >
+                  清空当前
+                </Button>
+                <Button
+                  icon={<PaperClipOutlined />}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading || pendingImages.length >= MAX_IMAGES_PER_MSG}
+                  title="上传图片（支持粘贴）"
+                >
+                  图片
+                </Button>
+              </Space>
               {loading ? (
                 <Button danger icon={<StopOutlined />} onClick={stop}>
                   中断
@@ -531,7 +733,7 @@ function ChatPanel() {
                   type="primary"
                   icon={<SendOutlined />}
                   onClick={send}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && pendingImages.length === 0}
                 >
                   发送
                 </Button>
