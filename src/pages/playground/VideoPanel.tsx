@@ -102,12 +102,29 @@ type VideoTask = {
   error?: { code?: string; message: string };
 };
 
+type VideoImageRole = 'first_frame' | 'last_frame' | 'reference';
+
 type ReferenceImage = {
   uid: string;
   url: string;
   name: string;
   assetId?: number;
   source: 'upload' | 'url';
+  // role:首帧 / 尾帧 / 参考图。提交时按 role 分桶到 first_frame_image /
+  // last_frame_image / images 三类字段。
+  role: VideoImageRole;
+};
+
+const VIDEO_ROLE_OPTIONS: { value: VideoImageRole; label: string }[] = [
+  { value: 'first_frame', label: '首帧' },
+  { value: 'last_frame', label: '尾帧' },
+  { value: 'reference', label: '参考' },
+];
+
+const VIDEO_ROLE_BADGE: Record<VideoImageRole, { text: string; bg: string }> = {
+  first_frame: { text: '首帧', bg: 'rgba(22,119,255,0.92)' },
+  last_frame: { text: '尾帧', bg: 'rgba(82,196,26,0.92)' },
+  reference: { text: '参考', bg: 'rgba(250,140,22,0.92)' },
 };
 
 function hasPrivateVideoURL(t?: VideoTask | null): boolean {
@@ -254,11 +271,13 @@ export default function VideoPanel() {
   const isSeedanceModel = isDoubaoSeedanceModel(modelName);
   const requiresPublicReferenceURL = isSeedanceModel || isViduModel(modelName);
 
-  const referenceURLs = () => {
-    const urls = referenceImages.map((x) => x.url).filter(Boolean);
-    const manual = imageURL.trim();
-    if (manual && !urls.includes(manual)) urls.push(manual);
-    return urls;
+  // defaultRoleForNew 决定新添加的参考图初始 role:第一张当首帧,第二张当尾帧,
+  // 第三张起按"参考",更贴近用户最常见的"首帧/首尾帧/多参考"流程。'auto' 给那些
+  // 显式不想标的(legacy 行为)。
+  const defaultRoleForNew = (existing: ReferenceImage[]): VideoImageRole => {
+    if (!existing.some((x) => x.role === 'first_frame')) return 'first_frame';
+    if (!existing.some((x) => x.role === 'last_frame')) return 'last_frame';
+    return 'reference';
   };
 
   const addReferenceURL = () => {
@@ -276,6 +295,7 @@ export default function VideoPanel() {
           url,
           name: '外部 URL',
           source: 'url',
+          role: defaultRoleForNew(prev),
         },
       ];
     });
@@ -284,6 +304,22 @@ export default function VideoPanel() {
 
   const removeReferenceImage = (uid: string) => {
     setReferenceImages((prev) => prev.filter((x) => x.uid !== uid));
+  };
+
+  // 同一时刻最多 1 张首帧 / 1 张尾帧;切换 role 时把冲突的图退回 reference。
+  const setReferenceRole = (uid: string, next: VideoImageRole) => {
+    setReferenceImages((prev) => {
+      const out = prev.map((x) => ({ ...x }));
+      const target = out.find((x) => x.uid === uid);
+      if (!target) return prev;
+      if (next === 'first_frame' || next === 'last_frame') {
+        for (const x of out) {
+          if (x.uid !== uid && x.role === next) x.role = 'reference';
+        }
+      }
+      target.role = next;
+      return out;
+    });
   };
 
   const uploadProps: UploadProps = {
@@ -323,15 +359,18 @@ export default function VideoPanel() {
           return;
         }
 
-        const item: ReferenceImage = {
-          uid: `asset-${uploaded.data.id}-${Date.now()}`,
-          assetId: uploaded.data.id,
-          url,
-          name: f.name || uploaded.data.filename || '参考图',
-          source: 'upload',
-        };
+        const assetID = uploaded.data.id;
+        const assetFilename = uploaded.data.filename;
         setReferenceImages((prev) => {
           if (prev.some((x) => x.url === url)) return prev;
+          const item: ReferenceImage = {
+            uid: `asset-${assetID}-${Date.now()}`,
+            assetId: assetID,
+            url,
+            name: f.name || assetFilename || '参考图',
+            source: 'upload',
+            role: defaultRoleForNew(prev),
+          };
           return [...prev, item];
         });
         message.success('参考图已添加');
@@ -426,19 +465,41 @@ export default function VideoPanel() {
 
     try {
       const body: any = { model: modelName, prompt: prompt.trim() };
-      const refs = referenceURLs();
+      // 合并:referenceImages 已经带 role,再加上手动输入框里那条孤立 URL(默认走 auto)。
+      type Bucket = { url: string; assetId: number; role: VideoImageRole };
+      const buckets: Bucket[] = referenceImages.map((x) => ({
+        url: x.url,
+        assetId: x.assetId || 0,
+        role: x.role,
+      }));
+      const manual = imageURL.trim();
+      if (manual && !buckets.some((x) => x.url === manual)) {
+        buckets.push({ url: manual, assetId: 0, role: defaultRoleForNew(referenceImages) });
+      }
       if (requiresPublicReferenceURL) {
-        const invalid = refs.find((x) => !isPublicHTTPImageURL(x));
+        const invalid = buckets.find((b) => !isPublicHTTPImageURL(b.url));
         if (invalid) {
           message.warning('当前模型的参考图必须是真实公网可访问的 http(s) 图片 URL,不能使用示例/localhost/内网地址');
           return;
         }
       }
-      if (refs.length > 0) {
-        body.images = refs;
+      const first = buckets.find((b) => b.role === 'first_frame');
+      const last = buckets.find((b) => b.role === 'last_frame');
+      const references = buckets.filter((b) => b.role === 'reference');
+      if (first) {
+        body.first_frame_image = first.url;
+        if (first.assetId > 0 && !requiresPublicReferenceURL) body.first_frame_asset_id = first.assetId;
       }
-      const assetIds = referenceImages.map((x) => x.assetId || 0);
-      if (!requiresPublicReferenceURL && assetIds.some((id) => id > 0)) body.image_asset_ids = assetIds;
+      if (last) {
+        body.last_frame_image = last.url;
+        if (last.assetId > 0 && !requiresPublicReferenceURL) body.last_frame_asset_id = last.assetId;
+      }
+      if (references.length > 0) {
+        body.images = references.map((b) => b.url);
+        if (!requiresPublicReferenceURL && references.some((b) => b.assetId > 0)) {
+          body.image_asset_ids = references.map((b) => b.assetId);
+        }
+      }
       if (duration) body.duration = duration;
       if (resolution) body.resolution = resolution;
 
@@ -632,28 +693,43 @@ export default function VideoPanel() {
               </div>
               {referenceImages.length > 0 && (
                 <div style={referenceGridStyle}>
-                  {referenceImages.map((item, idx) => (
-                    <div key={item.uid} style={referenceTileStyle}>
-                      <Image
-                        src={item.url}
-                        alt={item.name}
-                        width={72}
-                        height={72}
-                        style={{ objectFit: 'cover', display: 'block' }}
-                        preview={{ src: item.url }}
-                      />
-                      <Button
-                        size="small"
-                        type="text"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => removeReferenceImage(item.uid)}
-                        disabled={!!isInFlight || submitting}
-                        style={referenceDeleteStyle}
-                      />
-                      {idx === 0 && <span style={referenceBadgeStyle}>主图</span>}
-                    </div>
-                  ))}
+                  {referenceImages.map((item) => {
+                    const badge = VIDEO_ROLE_BADGE[item.role];
+                    return (
+                      <div key={item.uid} style={referenceTileStyle}>
+                        <Image
+                          src={item.url}
+                          alt={item.name}
+                          width={96}
+                          height={96}
+                          style={{ objectFit: 'cover', display: 'block' }}
+                          preview={{ src: item.url }}
+                        />
+                        <Button
+                          size="small"
+                          type="text"
+                          danger
+                          icon={<DeleteOutlined />}
+                          onClick={() => removeReferenceImage(item.uid)}
+                          disabled={!!isInFlight || submitting}
+                          style={referenceDeleteStyle}
+                        />
+                        {badge && (
+                          <span style={{ ...referenceBadgeStyle, background: badge.bg }}>
+                            {badge.text}
+                          </span>
+                        )}
+                        <Select
+                          size="small"
+                          value={item.role}
+                          onChange={(v) => setReferenceRole(item.uid, v as VideoImageRole)}
+                          options={VIDEO_ROLE_OPTIONS}
+                          disabled={!!isInFlight || submitting}
+                          style={referenceRoleSelectStyle}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -934,14 +1010,15 @@ const placeholderWrap: React.CSSProperties = {
 const referenceGridStyle: React.CSSProperties = {
   marginTop: 10,
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, 72px)',
-  gap: 8,
+  gridTemplateColumns: 'repeat(auto-fill, 96px)',
+  gap: 10,
 };
 
 const referenceTileStyle: React.CSSProperties = {
   position: 'relative',
-  width: 72,
-  height: 72,
+  width: 96,
+  // 图 96 + select 28(含间距)
+  height: 124,
   borderRadius: 8,
   overflow: 'hidden',
   border: '1px solid rgba(0,0,0,0.08)',
@@ -961,11 +1038,18 @@ const referenceDeleteStyle: React.CSSProperties = {
 const referenceBadgeStyle: React.CSSProperties = {
   position: 'absolute',
   left: 4,
-  bottom: 4,
+  top: 76,
   padding: '1px 5px',
   borderRadius: 4,
-  background: 'rgba(22,119,255,0.92)',
   color: '#fff',
   fontSize: 11,
   lineHeight: '16px',
+};
+
+const referenceRoleSelectStyle: React.CSSProperties = {
+  position: 'absolute',
+  left: 4,
+  right: 4,
+  bottom: 4,
+  width: 'calc(100% - 8px)',
 };

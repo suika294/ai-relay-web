@@ -2,6 +2,7 @@ import { MenuOutlined, RightOutlined } from '@ant-design/icons';
 import { Link, Outlet, useLocation } from '@umijs/max';
 import { Button, Drawer } from 'antd';
 import { useEffect, useState } from 'react';
+import { AuthModalProvider } from '@/components/AuthModalProvider';
 import PublicLayout from './PublicLayout';
 import './docs.css';
 
@@ -140,9 +141,11 @@ export default function DocsLayout() {
             </div>
           )}
 
-          <article className="docs-article">
-            <Outlet />
-          </article>
+          <AuthModalProvider>
+            <article className="docs-article">
+              <Outlet />
+            </article>
+          </AuthModalProvider>
 
           {(prev || next) && (
             <div className="docs-pager">

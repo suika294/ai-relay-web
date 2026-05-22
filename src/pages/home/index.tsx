@@ -19,6 +19,7 @@ import { history, useModel } from '@umijs/max';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import {
   Button,
+  Carousel,
   Col,
   Input,
   Modal,
@@ -252,22 +253,37 @@ export default function Home() {
   );
 
   // 推荐模型:优先取带 `recommended` 标签的;若没有则降级取带 `new` 标签;
-  // 都没有时直接取列表前 4 个(后端通常按 sort 字段排过序了)。最多展示 4 张。
+  // 都没有时直接取列表前几个(后端通常按 sort 字段排过序了)。
+  // 超过 4 个会自动切到 Carousel(每屏 4 张),上限 12(3 屏),避免 dots 过多。
+  const RECOMMENDED_MAX = 12;
+  const RECOMMENDED_PER_SLIDE = 4;
   const recommended = useMemo(() => {
     const tagged = list.filter((m) => m.tags?.includes('recommended'));
-    if (tagged.length >= 4) return tagged.slice(0, 4);
+    if (tagged.length >= RECOMMENDED_MAX) return tagged.slice(0, RECOMMENDED_MAX);
     const news = list.filter((m) => m.tags?.includes('new'));
     const merged = [...tagged];
     for (const m of news) {
-      if (merged.length >= 4) break;
+      if (merged.length >= RECOMMENDED_MAX) break;
       if (!merged.find((x) => x.id === m.id)) merged.push(m);
     }
-    for (const m of list) {
-      if (merged.length >= 4) break;
-      if (!merged.find((x) => x.id === m.id)) merged.push(m);
+    // 兜底:推荐/新模型都不够 4 个时,再从全表补足到 4
+    if (merged.length < 4) {
+      for (const m of list) {
+        if (merged.length >= 4) break;
+        if (!merged.find((x) => x.id === m.id)) merged.push(m);
+      }
     }
-    return merged.slice(0, 4);
+    return merged.slice(0, RECOMMENDED_MAX);
   }, [list]);
+
+  // 把 recommended 按每屏 4 个切片,供 Carousel 使用
+  const recommendedSlides = useMemo(() => {
+    const slides: API.PublicModel[][] = [];
+    for (let i = 0; i < recommended.length; i += RECOMMENDED_PER_SLIDE) {
+      slides.push(recommended.slice(i, i + RECOMMENDED_PER_SLIDE));
+    }
+    return slides;
+  }, [recommended]);
 
   // quickCreateKey —— "极简生成 Key" 流程:不再弹表单让用户填名字/有效期/额度,
   // 直接用模型名做 Key 名、不限额度、无有效期,拿到 key 后弹结果框让用户复制。
@@ -344,6 +360,46 @@ export default function Home() {
     }
   };
 
+  const renderFeaturedCard = (m: API.PublicModel) => {
+    const t = typeLabel[m.type];
+    return (
+      <Col key={m.id} xs={24} sm={12} md={12} lg={6}>
+        <div className="featured-card" onClick={() => handleGenerate(m)}>
+          <div className="featured-card-top">
+            <div className="featured-card-main">
+              <div className="featured-logo-wrap">
+                <ProviderLogo provider={m.provider_type} size={26} />
+              </div>
+              <div className="featured-card-titles">
+                <div className="featured-card-name">
+                  {m.display_name || m.name}
+                </div>
+                <div className="featured-card-provider">
+                  {providerLabel[m.provider_type] ?? m.provider_type}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="featured-card-meta">
+            <span>
+              {t?.icon} {t?.text ?? m.type}
+            </span>
+            <span>{fmtCtx(m.max_tokens)} 上下文</span>
+          </div>
+          <div className="featured-card-foot">
+            <span className="featured-price">
+              {fmtPrice(m.input_price)}
+              <em> / M in</em>
+            </span>
+            <Button type="primary" size="small">
+              生成 Key
+            </Button>
+          </div>
+        </div>
+      </Col>
+    );
+  };
+
   const renderFilter = (
     label: string,
     current: string,
@@ -411,17 +467,25 @@ export default function Home() {
                   <Button
                     type="primary"
                     size="large"
-                    onClick={() => history.push('/auth/register')}
+                    onClick={() => {
+                      setPickedModel(null);
+                      setAuthTab('register');
+                      setAuthOpen(true);
+                    }}
                   >
-                    免费注册
+                    注册
                   </Button>
                 )}
                 <Button
                   size="large"
                   type={site.register_enabled ? 'default' : 'primary'}
-                  onClick={() => history.push('/auth/login')}
+                  onClick={() => {
+                    setPickedModel(null);
+                    setAuthTab('login');
+                    setAuthOpen(true);
+                  }}
                 >
-                  {site.register_enabled ? '已有账号,登录' : '登录'}
+                  {site.register_enabled ? '已有账号，登录' : '登录'}
                 </Button>
               </div>
             )}
@@ -443,7 +507,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 推荐模型 —— 从全部模型里挑前 4 个(带 recommended/new 标签优先),做轻量横向展示 */}
+      {/* 推荐模型 —— 推荐/新标签优先,最多 12 张。超过 4 张自动切 Carousel,每屏 4 张 */}
       {!loading && recommended.length > 0 && (
         <section className="featured-section">
           <div className="featured-head">
@@ -452,55 +516,40 @@ export default function Home() {
             </Typography.Title>
             <span className="featured-sub">主流厂商旗舰,即点即用</span>
           </div>
-          <Row gutter={[16, 16]}>
-            {recommended.map((m) => {
-              const t = typeLabel[m.type];
-              return (
-                <Col key={m.id} xs={24} sm={12} md={12} lg={6}>
-                  <div className="featured-card" onClick={() => handleGenerate(m)}>
-                    <div className="featured-card-top">
-                      <div className="model-icon-wrap">
-                        <ProviderLogo provider={m.provider_type} size={26} />
-                      </div>
-                      <div className="featured-card-titles">
-                        <div className="featured-card-name">
-                          {m.display_name || m.name}
-                        </div>
-                        <div className="featured-card-provider">
-                          {providerLabel[m.provider_type] ?? m.provider_type}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="featured-card-meta">
-                      <span>
-                        {t?.icon} {t?.text ?? m.type}
-                      </span>
-                      <span>{fmtCtx(m.max_tokens)} 上下文</span>
-                    </div>
-                    <div className="featured-card-foot">
-                      <span className="featured-price">
-                        {fmtPrice(m.input_price)}
-                        <em> / M in</em>
-                      </span>
-                      <Button type="primary" size="small">
-                        生成 Key
-                      </Button>
-                    </div>
-                  </div>
-                </Col>
-              );
-            })}
-          </Row>
+          {recommendedSlides.length > 1 ? (
+            <Carousel
+              className="featured-carousel"
+              autoplay
+              autoplaySpeed={5000}
+              dots
+              arrows
+              pauseOnHover
+              infinite={false}
+            >
+              {recommendedSlides.map((slide, idx) => (
+                <div key={idx}>
+                  <Row gutter={[16, 16]}>
+                    {slide.map((m) => renderFeaturedCard(m))}
+                  </Row>
+                </div>
+              ))}
+            </Carousel>
+          ) : (
+            <Row gutter={[16, 16]}>
+              {recommended.map((m) => renderFeaturedCard(m))}
+            </Row>
+          )}
         </section>
       )}
 
-      {/* 定价 + 选模型直出 Key */}
-      <section id="pricing" className="pricing-page">
+      {/* 模型广场 + 选模型直出 Key */}
+      <section id="models" className="pricing-page model-market-section">
+        <span id="pricing" className="model-market-legacy-anchor" aria-hidden="true" />
         <Typography.Title level={2} style={{ marginBottom: 8 }}>
-          选择模型,立即生成 API Key
+          模型广场
         </Typography.Title>
         <Paragraph type="secondary" style={{ fontSize: 15 }}>
-          按 token 计费,价格跟随上游厂商。生成的 Key 默认只能调用当前所选模型,
+          发现并无缝集成顶尖 AI 模型。生成的 Key 默认只能调用当前所选模型,
           登录后可到控制台追加其他模型、设置有效期与消耗上限。
         </Paragraph>
 
@@ -563,12 +612,12 @@ export default function Home() {
                         <div className="model-card-name">
                           {m.display_name || m.name}
                           {m.tags?.includes('new') && (
-                            <Tag color="cyan" style={{ marginLeft: 8 }}>
+                            <Tag color="default" style={{ marginLeft: 8 }}>
                               New
                             </Tag>
                           )}
                           {m.tags?.includes('free') && (
-                            <Tag color="green" style={{ marginLeft: 4 }}>
+                            <Tag color="default" style={{ marginLeft: 4 }}>
                               免费
                             </Tag>
                           )}
@@ -760,17 +809,14 @@ export default function Home() {
       <AuthModal
         open={authOpen}
         defaultTab={authTab}
-        title="登录以生成 API Key"
-        description={
-          pickedModel
-            ? `登录后将直接为你生成 ${pickedModel.display_name || pickedModel.name} 的 Key。`
-            : '登录后即可继续刚才的操作。'
-        }
         onClose={() => setAuthOpen(false)}
         onSuccess={() => {
-          // 登录/注册完成:继续用户原来的"生成 Key"意图,直接走极简流程
           setAuthOpen(false);
-          if (pickedModel) quickCreateKey(pickedModel);
+          if (pickedModel) {
+            quickCreateKey(pickedModel);
+          } else {
+            history.push('/console/dashboard');
+          }
         }}
       />
     </PublicLayout>

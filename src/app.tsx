@@ -6,8 +6,8 @@ import { API_BASE_URL, apiURL } from '@/utils/request';
 // 站点信息的兜底默认值。后端 /system/info 不可达(网络抖动 / 启动早期)
 // 时用它顶上,确保 SPA 首屏不会因为站点名为空而显示成空白标题。
 const DEFAULT_SITE_INFO: API.SiteInfo = {
-  name: 'ai-relay',
-  logo: '',
+  name: '模桥',
+  logo: '/moqiao-logo-black.png',
   register_enabled: true,
   version: '0.0.1',
   api_base: '',
@@ -135,7 +135,7 @@ export const layout = ({ initialState }: any) => {
   const site = (initialState?.siteInfo as API.SiteInfo | undefined) ?? DEFAULT_SITE_INFO;
   return {
     // logo 后台没配时回落到内置 SVG,避免控制台顶栏空白。
-    logo: site.logo || '/logo.svg',
+    logo: site.logo || '/moqiao-logo-black.png',
     title: site.name,
     menu: { locale: false },
     // 顶栏右上角：头像名 + 下拉菜单（返回首页 / 个人设置 / 退出登录）

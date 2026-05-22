@@ -7,6 +7,7 @@ import {
 } from '@ant-design/icons';
 import { history, Link } from '@umijs/max';
 import { Button, Col, Row, Typography } from 'antd';
+import { useAuthModal } from '@/components/AuthModalProvider';
 import PublicLayout from '@/layouts/PublicLayout';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 
@@ -41,9 +42,24 @@ const features = [
 ];
 
 export default function Landing() {
-  const site = useSiteInfo();
   return (
     <PublicLayout>
+      <LandingContent />
+    </PublicLayout>
+  );
+}
+
+function LandingContent() {
+  const site = useSiteInfo();
+  const { openAuthModal } = useAuthModal();
+  const openRegister = () =>
+    openAuthModal({
+      defaultTab: 'register',
+      onSuccess: () => history.push('/console/dashboard'),
+    });
+
+  return (
+    <>
       {/* Hero */}
       <section className="hero">
         <h1 className="hero-title">
@@ -55,7 +71,7 @@ export default function Landing() {
         </p>
         <div className="hero-cta">
           {site.register_enabled && (
-            <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
+            <Button type="primary" size="large" onClick={openRegister}>
               免费注册
             </Button>
           )}
@@ -114,7 +130,7 @@ export default function Landing() {
         <p>注册账户即赠送试用额度，两分钟跑通首个请求</p>
         <div className="hero-cta">
           {site.register_enabled && (
-            <Button type="primary" size="large" onClick={() => history.push('/auth/register')}>
+            <Button type="primary" size="large" onClick={openRegister}>
               立即开始
             </Button>
           )}
@@ -128,6 +144,6 @@ export default function Landing() {
           </Button>
         </div>
       </section>
-    </PublicLayout>
+    </>
   );
 }

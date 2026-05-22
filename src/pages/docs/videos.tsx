@@ -110,13 +110,28 @@ export default function DocVideos() {
             </tr>
             <tr>
               <td>
-                <code>image_url</code>
+                <code>first_frame_image</code>
               </td>
               <td>string</td>
               <td>
-                图生视频(i2v)时的参考图 URL,需要公网可达。传 <code>http(s)://</code> 链接、
-                <code>data:image/...;base64,...</code> 或裸 base64 均可,{site.name}会按上游要求
-                自动转换。
+                <strong>首帧图。</strong>i2v 最常用的字段。可以是公网{' '}
+                <code>http(s)://</code> URL 或 <code>data:image/...;base64,...</code>(Doubao
+                Seedance 只接受公网 URL)。
+                {site.name}按 provider 路由:Doubao → <code>role=first_frame</code>、
+                Vidu → <code>/img2video</code>、Kling Omni → <code>type=first_frame</code>、
+                Kling I2V → <code>image</code>、Veo → <code>instance.image</code>。
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>last_frame_image</code>
+              </td>
+              <td>string</td>
+              <td>
+                尾帧图。和 <code>first_frame_image</code> 一起传就是<strong>首尾帧驱动</strong>:
+                Vidu 自动走 <code>/start-end2video</code>、Doubao 上双 role、Kling Omni 出{' '}
+                <code>end_frame</code>、Kling I2V 出 <code>image_tail</code>、Veo 出{' '}
+                <code>instance.lastFrame</code>。
               </td>
             </tr>
             <tr>
@@ -125,28 +140,47 @@ export default function DocVideos() {
               </td>
               <td>array</td>
               <td>
-                多图参考(Vidu / Kling V3 Omni 等支持),每个元素跟{' '}
-                <code>image_url</code> 同样的格式。顺序敏感:首图通常作主参考。
+                <strong>多图参考 / 角色融合。</strong>每项是 URL 或 data URL,Doubao 仅公网 URL。
+                Vidu 自动走 <code>/reference2video</code>、Doubao 全部 <code>role=reference_image</code>、
+                Veo 走 <code>instance.referenceImages</code>(最多 3 张)。
+                <strong>2026-05 之后语义严格为"参考图"</strong>,单张图不再当首帧 ——
+                要做首帧驱动请用 <code>first_frame_image</code>。
               </td>
             </tr>
             <tr>
               <td>
-                <code>image_asset_ids</code>
+                <code>first_frame_asset_id</code>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  + <code>last_frame_asset_id</code>
+                </div>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  + <code>image_asset_ids</code>
+                </div>
               </td>
-              <td>array</td>
+              <td>integer / array</td>
               <td>
-                通过 <code>/v1/files</code> 或控制台上传过的素材 ID,{site.name}从 storage 直读
-                原图后转交上游,适合本地/私有图片不方便外网访问的场景。可与{' '}
-                <code>image_url</code> 混用,顺序对齐。
+                上面三个 URL 字段对应的<strong>平台素材 ID</strong>,适合本地/私有图不方便外网
+                访问的场景。{site.name}从 storage 直读原图,按 provider 转 base64 /
+                data URL / 公网 URL 注入。<code>image_asset_ids</code> 按位对齐到{' '}
+                <code>images</code>,<code>0</code> 表示该位是外部 URL。
               </td>
             </tr>
             <tr>
               <td>
-                <code>last_frame</code>
+                <code>reference_video</code>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  + <code>reference_video_asset_id</code>
+                </div>
               </td>
-              <td>string</td>
+              <td>string / integer</td>
               <td>
-                可选,首尾帧模式下的尾帧参考图(部分模型支持)。
+                <strong>参考视频。</strong>用作视频续写 / 风格迁移 / 角色一致性的输入视频。
+                可以是公网 <code>http(s)://</code> 视频 URL,或上传到平台后的{' '}
+                <code>reference_video_asset_id</code>(content-type 必须以{' '}
+                <code>video/</code> 开头,大小上限 500MB)。
+                <strong>仅在 model 声明 <code>supports_reference_video</code> 能力时可用</strong>;
+                未声明的模型传该字段会直接返回 400。视频体积大,
+                <strong>不接受 base64 / data URL 内联</strong>。
               </td>
             </tr>
             <tr>
@@ -159,6 +193,15 @@ export default function DocVideos() {
           </tbody>
         </table>
       </div>
+
+      <Callout type="info" title="图片入参的三类语义">
+        <p style={{ margin: 0 }}>
+          视频图片输入按语义分三类:<strong>首帧 / 尾帧 / 参考图</strong>,{site.name}按 provider
+          自动路由到对应端点或 role,你不再需要关心"传 1 张图是不是首帧"、"传 2 张图怎么变首尾帧"。
+          老字段 <code>image_url</code> / <code>reference_images</code> /{' '}
+          <code>reference_asset_ids</code> 仍兼容(JSON 解析阶段自动迁移),但建议直接用新协议字段。
+        </p>
+      </Callout>
 
       <h3>提交响应</h3>
       <CodeBlock
@@ -331,28 +374,47 @@ while (true) {
       </p>
 
       <h2>图生视频(i2v)</h2>
-      <p>把参考图通过 <code>image_url</code> 或 <code>images</code> 传入即可:</p>
+      <p>
+        <strong>首帧驱动</strong> —— 单张参考图当作视频起始帧:
+      </p>
       <CodeBlock
         lang="json"
         code={`{
   "model": "kling-v3-omni",
   "prompt": "镜头慢慢推近,主角抬起手",
   "duration": 5,
-  "image_url": "https://example.com/portrait.jpg"
+  "first_frame_image": "https://example.com/portrait.jpg"
 }`}
       />
       <p>
-        多图参考(Vidu 多图、Kling V3 Omni 等)用 <code>images</code> 数组:
+        <strong>首尾帧驱动</strong> —— 首帧 + 尾帧,模型补完中间过渡(Vidu 自动走{' '}
+        <code>/start-end2video</code>、Doubao 双 role、Kling I2V 走 image+image_tail):
       </p>
       <CodeBlock
         lang="json"
         code={`{
   "model": "viduq3-turbo",
-  "prompt": "两个角色对话",
+  "prompt": "在两帧之间补完稳定的过渡运动",
+  "duration": 5,
+  "first_frame_image": "https://example.com/start.png",
+  "last_frame_image":  "https://example.com/end.png"
+}`}
+      />
+      <p>
+        <strong>多图参考 / 角色融合</strong> —— 把若干参考图喂给模型,生成时让画面融合
+        这些主体 / 场景 / 道具(Vidu 自动走 <code>/reference2video</code>、Kling Omni 多
+        reference、Doubao reference_image role):
+      </p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "model": "kling-v3-omni",
+  "prompt": "主角穿着道具中的银色外套,出现在场景图的屋顶上,缓慢走向镜头",
   "duration": 5,
   "images": [
-    "https://example.com/character1.png",
-    "https://example.com/character2.png"
+    "https://example.com/character.png",
+    "https://example.com/scene.png",
+    "https://example.com/outfit.png"
   ]
 }`}
       />
@@ -362,8 +424,48 @@ while (true) {
           公网可达的 HTTP(S) URL 最稳;{site.name}会优先透传 URL,避免大体积 base64 上行慢。
           本地 / 私有 / 不公开的图建议先用{' '}
           <Link to="/docs/sdk">/v1/files</Link>{' '}
-          上传,再用 <code>image_asset_ids</code> 引用 —— 比 base64 内联更高效,
-          也能复用历史素材。
+          上传,再用 <code>first_frame_asset_id</code> /{' '}
+          <code>last_frame_asset_id</code> / <code>image_asset_ids</code> 引用 ——
+          比 base64 内联更高效,也能复用历史素材。Doubao Seedance 只接受公网 URL,
+          这条路径会由 {site.name} 自动 sweeper 转存为公网 URL 后再交给上游。
+        </p>
+      </Callout>
+
+      <h2>视频参考(reference_video)</h2>
+      <p>
+        部分模型支持<strong>以视频为输入</strong>的生成模式 —— 视频续写、风格迁移、
+        角色一致性等。统一通过 <code>reference_video</code>(公网 URL)或{' '}
+        <code>reference_video_asset_id</code>(平台素材 ID)提交,后端按 provider 路由到
+        对应上游端点。
+      </p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "model": "viduq1",
+  "prompt": "在原视频结尾基础上,镜头继续推进,主角抬手指向远方",
+  "duration": 5,
+  "reference_video": "https://example.com/clip.mp4"
+}`}
+      />
+      <p>
+        平台素材形式(推荐;{site.name}会签发可被上游下载的临时 URL):
+      </p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "model": "kling-v1-6",
+  "prompt": "保持原片风格,延长 5 秒",
+  "reference_video_asset_id": 987
+}`}
+      />
+      <Callout type="warn" title="能力门禁">
+        <p style={{ margin: 0 }}>
+          <code>reference_video</code> 只在 model 声明 <code>supports_reference_video</code>{' '}
+          能力时才被接受;未声明的模型(如 <code>viduq3-turbo</code>、<code>kling-v3-omni</code>)
+          传该字段会立即返回 <code>400</code>。已开启支持的型号见
+          <Link to="/docs/models">模型列表</Link>。
+          视频体积通常较大,<strong>不接受 base64 / data URL 内联</strong>,
+          仅支持公网 URL 或 asset_id 两种形态;asset 大小上限 500MB。
         </p>
       </Callout>
 
@@ -384,15 +486,17 @@ while (true) {
               <td>
                 字节跳动 Seedance,支持文生视频 + 图生视频,质量稳定,中文 prompt 友好。
                 支持 5s / 10s,常见 <code>16:9</code> / <code>9:16</code>。
+                已声明 <code>supports_reference_video</code>。
               </td>
             </tr>
             <tr>
               <td>
-                <code>veo-3.1-generate-preview</code>
+                <code>veo-3.0/3.1-generate-preview</code>
               </td>
               <td>
-                Google Veo 3.1,质量第一梯队;支持文生视频 + 图生视频(inlineData /
+                Google Veo,质量第一梯队;支持文生视频 + 图生视频(inlineData /
                 referenceImages)。默认 8s,部分时长需要预览/正式分级 access。
+                已声明 <code>supports_reference_video</code>。
               </td>
             </tr>
             <tr>
@@ -401,15 +505,26 @@ while (true) {
               </td>
               <td>
                 可灵 V3 Omni,**走单独的 omni-video 端点**,{site.name}已自动路由。支持多参考图
-                (image_list),适合复杂分镜场景。
+                (image_list),适合复杂分镜场景。omni 输入语义不同,
+                <strong>不接受 <code>reference_video</code></strong>。
               </td>
             </tr>
             <tr>
               <td>
-                <code>kling-v1 / v2 / pro / std / master</code>
+                <code>kling-v1 / kling-v1-6</code>
               </td>
               <td>
-                可灵传统 t2v / i2v 模型,按 mode(std / pro / master)分档计费。
+                可灵 V1 系列 t2v / i2v 模型;按 mode(std / pro / master)分档计费。
+                已声明 <code>supports_reference_video</code>(走上游 video-extend)。
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>viduq1 / vidu1.5 / vidu2.0</code>
+              </td>
+              <td>
+                Vidu 经典系列,支持文生 / 图生 / 视频续写(<code>/extend2video</code>);
+                已声明 <code>supports_reference_video</code>。
               </td>
             </tr>
             <tr>
@@ -418,6 +533,7 @@ while (true) {
               </td>
               <td>
                 Vidu Q3 Turbo,主打速度,适合短视频快速生成;支持多图参考。
+                上游不支持 extend,<strong>不接受 <code>reference_video</code></strong>。
               </td>
             </tr>
           </tbody>
@@ -428,7 +544,15 @@ while (true) {
       <ul>
         <li>
           <strong><code>image_url is not valid</code></strong> —— 上游下载不到参考图。
-          检查 URL 是否公网可达,或换用 <code>image_asset_ids</code>。
+          检查 <code>first_frame_image</code> / <code>last_frame_image</code> /{' '}
+          <code>images</code> 里的 URL 是否公网可达,或改用对应的{' '}
+          <code>*_asset_id</code> / <code>image_asset_ids</code> 走平台素材。
+        </li>
+        <li>
+          <strong><code>model "..." does not support reference_video</code></strong> —— 当前
+          model 没有声明 <code>supports_reference_video</code> 能力,但请求里带了{' '}
+          <code>reference_video</code> / <code>reference_video_asset_id</code>。
+          换一个声明支持的模型,或去掉该字段。
         </li>
         <li>
           <strong><code>insufficient_quota</code></strong> —— 视频单价较高(5s 视频通常 0.2~1 USD),

@@ -7,8 +7,8 @@
 import { useModel } from '@umijs/max';
 
 export const DEFAULT_SITE_INFO: API.SiteInfo = {
-  name: 'ai-relay',
-  logo: '',
+  name: '模桥',
+  logo: '/moqiao-logo-black.png',
   register_enabled: true,
   version: '0.0.1',
   api_base: '',

@@ -308,8 +308,6 @@ export default function PublicRecharge() {
       <AuthModal
         open={authOpen}
         defaultTab="login"
-        title="登录以继续充值/兑换"
-        description="登录后可以发起充值订单和使用兑换码。"
         onClose={() => {
           setAuthOpen(false);
           setPendingAction(null);

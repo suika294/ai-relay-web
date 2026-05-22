@@ -1,9 +1,12 @@
-import { Link } from '@umijs/max';
+import { history, Link } from '@umijs/max';
+import { Button } from 'antd';
+import { useAuthModal } from '@/components/AuthModalProvider';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function QuickStart() {
   const site = useSiteInfo();
+  const { openAuthModal } = useAuthModal();
   const API_BASE = useApiBase();
   return (
     <>
@@ -22,7 +25,37 @@ export default function QuickStart() {
 
       <h2>1. 创建账户并生成 API Key</h2>
       <p>
-        前往 <Link to="/auth/register">免费注册</Link>,登录后进入「控制台 → API
+        前往{' '}
+        {site.register_enabled ? (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto' }}
+            onClick={() =>
+              openAuthModal({
+                defaultTab: 'register',
+                onSuccess: () => history.push('/console/tokens'),
+              })
+            }
+          >
+            免费注册
+          </Button>
+        ) : (
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto' }}
+            onClick={() =>
+              openAuthModal({
+                defaultTab: 'login',
+                onSuccess: () => history.push('/console/tokens'),
+              })
+            }
+          >
+            登录
+          </Button>
+        )}
+        ,登录后进入「控制台 → API
         Key」页,点击「新建 Token」即可拿到以 <code>sk-</code> 开头的密钥。
         也可以回到 <Link to="/">首页</Link>,在「选择模型,立即生成 API
         Key」区域直接为某个模型一键生成 Key。
