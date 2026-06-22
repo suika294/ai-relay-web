@@ -25,7 +25,9 @@ import {
   Upload,
 } from 'antd';
 import type { UploadProps } from 'antd';
+import { useIntl } from '@umijs/max';
 import { useEffect, useRef, useState } from 'react';
+import { t } from '@/utils/i18n';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
 import { browserDownloadName } from '@/utils/media';
 import { apiURL } from '@/utils/request';
@@ -60,13 +62,13 @@ function parseHTMLError(html: string, httpStatus: number): string {
   const h1 = /<h1[^>]*>([^<]+)<\/h1>/i.exec(html)?.[1]?.trim();
   const headline = title || h1 || `HTTP ${httpStatus}`;
   if (/504|gateway time-?out/i.test(headline)) {
-    return `${headline} · 反向代理上游超时(Nginx 默认 60s)。图像模型在大参考图场景下经常超过此阈值,本页已改异步轮询;若仍超时,请检查 Nginx proxy_read_timeout 或后端到上游链路。`;
+    return `${headline} · ${t('playground.image.err504')}`;
   }
   if (/502|bad gateway/i.test(headline)) {
-    return `${headline} · 反向代理连不上后端。请确认 backend 服务存活,或后端/上游连接是否被中断。`;
+    return `${headline} · ${t('playground.image.err502')}`;
   }
   if (/503|service unavailable/i.test(headline)) {
-    return `${headline} · 后端临时不可用。请稍后重试。`;
+    return `${headline} · ${t('playground.image.err503')}`;
   }
   return headline;
 }
@@ -75,22 +77,22 @@ function friendlyImageError(msg: string): string {
   // OpenAI gpt-image 多参考图,某张文件被拒
   if (/invalid_image_file|Invalid image file or mode/i.test(msg)) {
     return [
-      '上游报参考图无效。常见原因:① 该图实际格式 / 颜色模式不被模型接受(CMYK JPEG、动图、超大尺寸);② 同时传了 image_url 顶层字段和 images 数组造成重复或顺序错乱。',
-      '建议先逐张试,只留一张参考图复现一下;OpenAI 报的 image N 是 1-based 索引,可按当前参考图列表的顺序定位。',
-      `原始错误: ${msg}`,
+      t('playground.image.errInvalidImage1'),
+      t('playground.image.errInvalidImage2'),
+      t('playground.image.errRaw', { msg }),
     ].join('\n\n');
   }
   // Gemini 拒绝出图(本轮 backend 已把上游 text/finishReason 拼进来)
   if (/no_image_data|response contained no image data/i.test(msg)) {
     return [
-      'Gemini 返回了非图像响应。常见原因:① 安全策略拒绝(地缘 / 人物 / 政治意涵的提示常触发);② 模型路径走成了 chat-only;③ 上游有降级。',
-      `原始错误: ${msg}`,
+      t('playground.image.errNoImageData'),
+      t('playground.image.errRaw', { msg }),
     ].join('\n\n');
   }
   if (/trying to proxy|econnrefused|econnreset|socket hang up/i.test(msg)) {
     return [
-      '前端开发代理暂时连不上后端。自动刷新会继续重试;如果一直出现,请确认后端服务已启动。',
-      `原始错误: ${msg}`,
+      t('playground.image.errProxy'),
+      t('playground.image.errRaw', { msg }),
     ].join('\n\n');
   }
   return msg;
@@ -188,13 +190,13 @@ type ControlsConfig = {
 // 内,1920×1920 = 3,686,400 是踩着下限的方图,适合不想被纵横裁切的素材。
 const seedream4PlusControls: ControlsConfig = {
   sizeOpts: [
-    { value: '2048x2048', label: '2048 × 2048(方,默认)' },
-    { value: '2560x1440', label: '2560 × 1440(横,2K)' },
-    { value: '1440x2560', label: '1440 × 2560(竖,2K)' },
-    { value: '1920x1920', label: '1920 × 1920(方,踩下限)' },
-    { value: '3840x2160', label: '3840 × 2160(横,4K)' },
-    { value: '2160x3840', label: '2160 × 3840(竖,4K)' },
-    { value: '4096x4096', label: '4096 × 4096(方,4K)' },
+    { value: '2048x2048', label: t('playground.image.sizeSd4_2048SquareDefault') },
+    { value: '2560x1440', label: t('playground.image.sizeSd4_2560Land2K') },
+    { value: '1440x2560', label: t('playground.image.sizeSd4_1440Port2K') },
+    { value: '1920x1920', label: t('playground.image.sizeSd4_1920SquareMin') },
+    { value: '3840x2160', label: t('playground.image.sizeSd4_3840Land4K') },
+    { value: '2160x3840', label: t('playground.image.sizeSd4_2160Port4K') },
+    { value: '4096x4096', label: t('playground.image.sizeSd4_4096Square4K') },
   ],
   defaultSize: '2048x2048',
 };
@@ -202,28 +204,28 @@ const seedream4PlusControls: ControlsConfig = {
 const seedream3Controls: ControlsConfig = {
   sizeOpts: [
     { value: '512x512', label: '512 × 512' },
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
     { value: '2048x2048', label: '2048 × 2048' },
-    { value: '1920x1080', label: '1920 × 1080(横)' },
-    { value: '1080x1920', label: '1080 × 1920(竖)' },
+    { value: '1920x1080', label: t('playground.image.size1920Land') },
+    { value: '1080x1920', label: t('playground.image.size1080Port') },
   ],
   defaultSize: '1024x1024',
 };
 
 const dalle3Controls: ControlsConfig = {
   sizeOpts: [
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
-    { value: '1792x1024', label: '1792 × 1024(横)' },
-    { value: '1024x1792', label: '1024 × 1792(竖)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
+    { value: '1792x1024', label: t('playground.image.size1792Land') },
+    { value: '1024x1792', label: t('playground.image.size1792Port') },
   ],
   defaultSize: '1024x1024',
   qualityOpts: [
-    { value: 'standard', label: '标准(standard)' },
-    { value: 'hd', label: '高清(hd)' },
+    { value: 'standard', label: t('playground.image.qualityStandard') },
+    { value: 'hd', label: t('playground.image.qualityHd') },
   ],
   styleOpts: [
-    { value: 'vivid', label: '鲜艳(vivid)' },
-    { value: 'natural', label: '自然(natural)' },
+    { value: 'vivid', label: t('playground.image.styleVivid') },
+    { value: 'natural', label: t('playground.image.styleNatural') },
   ],
 };
 
@@ -231,60 +233,60 @@ const dalle2Controls: ControlsConfig = {
   sizeOpts: [
     { value: '256x256', label: '256 × 256' },
     { value: '512x512', label: '512 × 512' },
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
   ],
   defaultSize: '1024x1024',
 };
 
 const gptImage1Controls: ControlsConfig = {
   sizeOpts: [
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
-    { value: '1536x1024', label: '1536 × 1024(横)' },
-    { value: '1024x1536', label: '1024 × 1536(竖)' },
-    { value: 'auto', label: '自动(auto)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
+    { value: '1536x1024', label: t('playground.image.size1536Land') },
+    { value: '1024x1536', label: t('playground.image.size1536Port') },
+    { value: 'auto', label: t('playground.image.sizeAuto') },
   ],
   defaultSize: '1024x1024',
   qualityOpts: [
-    { value: 'auto', label: '自动(auto)' },
-    { value: 'low', label: '低(low)' },
-    { value: 'medium', label: '中(medium)' },
-    { value: 'high', label: '高(high)' },
+    { value: 'auto', label: t('playground.image.qualityAuto') },
+    { value: 'low', label: t('playground.image.qualityLow') },
+    { value: 'medium', label: t('playground.image.qualityMedium') },
+    { value: 'high', label: t('playground.image.qualityHigh') },
   ],
 };
 
 // gpt-image-2 接受任意满足约束的 WxH。这里挑常见 1K/2K/4K 预设,后端 clamp 会处理边界。
 const gptImage2Controls: ControlsConfig = {
   sizeOpts: [
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
-    { value: '2048x2048', label: '2048 × 2048(2K 方)' },
-    { value: '2048x1152', label: '2048 × 1152(2K 横 16:9)' },
-    { value: '1152x2048', label: '1152 × 2048(2K 竖 16:9)' },
-    { value: '3840x2160', label: '3840 × 2160(4K 横)' },
-    { value: '2160x3840', label: '2160 × 3840(4K 竖)' },
-    { value: 'auto', label: '自动(auto)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
+    { value: '2048x2048', label: t('playground.image.size2048Square2K') },
+    { value: '2048x1152', label: t('playground.image.size2048Land2K') },
+    { value: '1152x2048', label: t('playground.image.size2048Port2K') },
+    { value: '3840x2160', label: t('playground.image.size3840Land4K') },
+    { value: '2160x3840', label: t('playground.image.size3840Port4K') },
+    { value: 'auto', label: t('playground.image.sizeAuto') },
   ],
   defaultSize: '1024x1024',
   defaultQuality: 'medium',
   qualityOpts: [
-    { value: 'auto', label: '自动(auto)' },
-    { value: 'low', label: '低(low)' },
-    { value: 'medium', label: '中(medium)' },
-    { value: 'high', label: '高(high)' },
+    { value: 'auto', label: t('playground.image.qualityAuto') },
+    { value: 'low', label: t('playground.image.qualityLow') },
+    { value: 'medium', label: t('playground.image.qualityMedium') },
+    { value: 'high', label: t('playground.image.qualityHigh') },
   ],
 };
 
 const imagenControls: ControlsConfig = {
   sizeOpts: [], // Imagen 不接 size,用 aspectRatio + imageSize 组合
   aspectOpts: [
-    { value: '1:1', label: '1:1(方)' },
-    { value: '4:3', label: '4:3(横)' },
-    { value: '3:4', label: '3:4(竖)' },
-    { value: '16:9', label: '16:9(宽屏横)' },
-    { value: '9:16', label: '9:16(宽屏竖)' },
+    { value: '1:1', label: t('playground.image.aspect11Square') },
+    { value: '4:3', label: t('playground.image.aspect43Land') },
+    { value: '3:4', label: t('playground.image.aspect34Port') },
+    { value: '16:9', label: t('playground.image.aspect169WideLand') },
+    { value: '9:16', label: t('playground.image.aspect916WidePort') },
   ],
   defaultAspect: '1:1',
   imageSizeOpts: [
-    { value: '1K', label: '1K(默认)' },
+    { value: '1K', label: t('playground.image.tier1KDefault') },
     { value: '2K', label: '2K' },
   ],
   defaultImageSize: '1K',
@@ -307,7 +309,7 @@ const geminiImageControls: ControlsConfig = {
   defaultAspect: '1:1',
   imageSizeOpts: [
     { value: '512', label: '512' },
-    { value: '1K', label: '1K(默认)' },
+    { value: '1K', label: t('playground.image.tier1KDefault') },
     { value: '2K', label: '2K' },
     { value: '4K', label: '4K' },
   ],
@@ -317,7 +319,7 @@ const geminiImageControls: ControlsConfig = {
 const cogviewControls: ControlsConfig = {
   sizeOpts: [
     { value: '512x512', label: '512 × 512' },
-    { value: '1024x1024', label: '1024 × 1024(默认)' },
+    { value: '1024x1024', label: t('playground.image.size1024Default') },
     { value: '2048x2048', label: '2048 × 2048' },
     { value: '1440x720', label: '1440 × 720' },
     { value: '720x1440', label: '720 × 1440' },
@@ -330,8 +332,8 @@ const unknownControls: ControlsConfig = {
   sizeOpts: [
     { value: '512x512', label: '512 × 512' },
     { value: '1024x1024', label: '1024 × 1024' },
-    { value: '1024x1792', label: '1024 × 1792(竖)' },
-    { value: '1792x1024', label: '1792 × 1024(横)' },
+    { value: '1024x1792', label: t('playground.image.size1792Port') },
+    { value: '1792x1024', label: t('playground.image.size1792Land') },
   ],
   defaultSize: '1024x1024',
 };
@@ -361,12 +363,20 @@ async function probeUploadedImage(
   file: File,
 ): Promise<{ ok: true; width: number; height: number } | { ok: false; error: string }> {
   if (!file.type.startsWith('image/')) {
-    return { ok: false, error: `MIME 是 ${file.type || '未知'},不是 image/*` };
+    return {
+      ok: false,
+      error: t('playground.image.probeBadMime', {
+        mime: file.type || t('playground.image.unknown'),
+      }),
+    };
   }
   if (file.size > IMAGE_REF_MAX_BYTES) {
     return {
       ok: false,
-      error: `文件 ${(file.size / 1024 / 1024).toFixed(1)} MB,超过 ${IMAGE_REF_MAX_BYTES / 1024 / 1024} MB 上限`,
+      error: t('playground.image.probeTooLarge', {
+        size: (file.size / 1024 / 1024).toFixed(1),
+        max: IMAGE_REF_MAX_BYTES / 1024 / 1024,
+      }),
     };
   }
   const url = URL.createObjectURL(file);
@@ -377,16 +387,12 @@ async function probeUploadedImage(
         img.onload = () =>
           resolve({ width: img.naturalWidth, height: img.naturalHeight });
         img.onerror = () =>
-          reject(
-            new Error(
-              '浏览器无法解码这张图(可能是 CMYK JPEG、损坏文件、或不是真正的图片)',
-            ),
-          );
+          reject(new Error(t('playground.image.probeDecodeFail')));
         img.src = url;
       },
     );
     if (dims.width <= 0 || dims.height <= 0) {
-      return { ok: false, error: '解码出的尺寸为 0,图片无效' };
+      return { ok: false, error: t('playground.image.probeZeroDim') };
     }
     return { ok: true, width: dims.width, height: dims.height };
   } catch (e: any) {
@@ -415,16 +421,17 @@ function statusColor(s: string): 'default' | 'processing' | 'success' | 'error' 
 
 function statusText(s: string): string {
   const m: Record<string, string> = {
-    queued: '排队中',
-    running: '生成中',
-    succeeded: '已完成',
-    failed: '失败',
-    canceled: '已取消',
+    queued: t('playground.image.statusQueued'),
+    running: t('playground.image.statusRunning'),
+    succeeded: t('playground.image.statusSucceeded'),
+    failed: t('playground.image.statusFailed'),
+    canceled: t('playground.image.statusCanceled'),
   };
   return m[s] || s;
 }
 
 export default function ImagePanel() {
+  const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
   const [tokens, setTokens] = useState<API.Token[]>([]);
   const [modelName, setModelName] = useState<string>();
@@ -537,7 +544,7 @@ export default function ImagePanel() {
 
   const addReferenceURL = () => {
     const url = imageURL.trim();
-    if (!url) return message.warning('请输入参考图 URL');
+    if (!url) return message.warning(intl.formatMessage({ id: 'playground.image.warnRefUrl' }));
     setReferenceImages((prev) => {
       if (prev.some((x) => x.url === url)) return prev;
       return [
@@ -545,7 +552,7 @@ export default function ImagePanel() {
         {
           uid: `url-${Date.now()}`,
           url,
-          name: '外部 URL',
+          name: intl.formatMessage({ id: 'playground.image.externalUrl' }),
           source: 'url',
         },
       ];
@@ -563,7 +570,7 @@ export default function ImagePanel() {
     showUploadList: false,
     beforeUpload: (file) => {
       if (file.type && !file.type.startsWith('image/')) {
-        message.warning('请上传图片文件');
+        message.warning(intl.formatMessage({ id: 'playground.image.warnUploadImageFile' }));
         return Upload.LIST_IGNORE;
       }
       return true;
@@ -576,21 +583,27 @@ export default function ImagePanel() {
         // 避免传到后端再 HEAD 一次 / 上游再报 invalid_image_file。
         const probe = await probeUploadedImage(f);
         if (!probe.ok) {
-          throw new Error(`参考图被拒:${probe.error}`);
+          throw new Error(
+            intl.formatMessage({ id: 'playground.image.refRejected' }, { error: probe.error }),
+          );
         }
         const uploaded = await assetApi.upload(f, {
           module: 'image',
           purpose: 'image_reference',
         });
         if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || '上传失败');
+          throw new Error(
+            uploaded.message || intl.formatMessage({ id: 'playground.image.uploadFailed' }),
+          );
         }
 
         let url = uploaded.data.public_url;
         if (!url) {
           const detail = await assetApi.detail(uploaded.data.id);
           if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || '获取素材 URL 失败');
+            throw new Error(
+              detail.message || intl.formatMessage({ id: 'playground.image.getAssetUrlFailed' }),
+            );
           }
           url = detail.data.url;
         }
@@ -599,17 +612,17 @@ export default function ImagePanel() {
           uid: `asset-${uploaded.data.id}-${Date.now()}`,
           assetId: uploaded.data.id,
           url,
-          name: f.name || uploaded.data.filename || '参考图',
+          name: f.name || uploaded.data.filename || intl.formatMessage({ id: 'playground.image.refImage' }),
           source: 'upload',
         };
         setReferenceImages((prev) => {
           if (prev.some((x) => x.url === url)) return prev;
           return [...prev, item];
         });
-        message.success('参考图已添加');
+        message.success(intl.formatMessage({ id: 'playground.image.refAdded' }));
         onSuccess?.(uploaded as any);
       } catch (e: any) {
-        message.error(e?.message || '上传失败');
+        message.error(e?.message || intl.formatMessage({ id: 'playground.image.uploadFailed' }));
         onError?.(e);
       } finally {
         setUploadingRef(false);
@@ -648,7 +661,7 @@ export default function ImagePanel() {
       if (!res.ok) {
         const msg = extractErrMsg(text, res.status);
         if (auto && isTransientPollError(res.status, msg)) {
-          setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+          setErrMsg(intl.formatMessage({ id: 'playground.image.autoRefreshFailed' }, { msg }));
           schedulePoll(id, 3000);
           return;
         }
@@ -666,7 +679,7 @@ export default function ImagePanel() {
     } catch (e: any) {
       const msg = String(e?.message || e);
       if (auto && isTransientPollError(0, msg)) {
-        setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+        setErrMsg(intl.formatMessage({ id: 'playground.image.autoRefreshFailed' }, { msg }));
         schedulePoll(id, 3000);
         return;
       }
@@ -677,11 +690,13 @@ export default function ImagePanel() {
   };
 
   const submit = async () => {
-    if (!prompt.trim()) return message.warning('请输入提示词');
-    if (!modelName) return message.warning('请选择模型');
-    if (!selectedToken) return message.warning('请先创建 API Key');
+    if (!prompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.image.warnPrompt' }));
+    if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.image.warnModel' }));
+    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.image.warnToken' }));
     if (!tokenAllowsModel)
-      return message.warning(`当前 Key 限制了可用模型,不包含 ${modelName}`);
+      return message.warning(
+        intl.formatMessage({ id: 'playground.image.warnTokenModelLimit' }, { model: modelName }),
+      );
 
     setSubmitting(true);
     setErrMsg(null);
@@ -782,7 +797,7 @@ export default function ImagePanel() {
           style={{ flex: '1 1 440px', minWidth: 360 }}
           title={
             <span>
-              <PictureOutlined /> 图像生成
+              <PictureOutlined /> {intl.formatMessage({ id: 'playground.image.title' })}
             </span>
           }
           extra={
@@ -793,7 +808,7 @@ export default function ImagePanel() {
                 icon={<HistoryOutlined />}
                 onClick={() => setHistoryOpen(true)}
               >
-                历史
+                {intl.formatMessage({ id: 'playground.image.history' })}
               </Button>
               <span style={{ color: '#888', fontSize: 12 }}>
                 POST /v1/images/generations/async
@@ -803,10 +818,10 @@ export default function ImagePanel() {
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
-              <div style={labelStyle}>模型</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.model' })}</div>
               <Select
                 style={{ width: '100%' }}
-                placeholder="选择图像模型"
+                placeholder={intl.formatMessage({ id: 'playground.image.selectModelPlaceholder' })}
                 options={models}
                 value={modelName}
                 onChange={setModelName}
@@ -819,7 +834,7 @@ export default function ImagePanel() {
               <div style={labelStyle}>API Key</div>
               <Select
                 style={{ width: '100%' }}
-                placeholder="选择 API Key"
+                placeholder={intl.formatMessage({ id: 'playground.image.selectTokenPlaceholder' })}
                 options={tokens.map((t) => ({
                   value: t.id,
                   label: `${t.name} (${t.key_prefix}***)`,
@@ -830,14 +845,14 @@ export default function ImagePanel() {
               />
               {selectedToken && !tokenAllowsModel && (
                 <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  当前 Key 限制了可用模型,不包含 {modelName}
+                  {intl.formatMessage({ id: 'playground.image.warnTokenModelLimit' }, { model: modelName })}
                 </div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               {controls.sizeOpts.length > 0 && (
                 <div style={{ flex: 1 }}>
-                  <div style={labelStyle}>尺寸</div>
+                  <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.size' })}</div>
                   <Select
                     style={{ width: '100%' }}
                     value={size}
@@ -848,12 +863,15 @@ export default function ImagePanel() {
                 </div>
               )}
               <div style={{ width: controls.sizeOpts.length > 0 ? 120 : '100%' }}>
-                <div style={labelStyle}>张数</div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.count' })}</div>
                 <Select
                   style={{ width: '100%' }}
                   value={n}
                   onChange={setN}
-                  options={[1, 2, 3, 4].map((v) => ({ value: v, label: `${v} 张` }))}
+                  options={[1, 2, 3, 4].map((v) => ({
+                    value: v,
+                    label: intl.formatMessage({ id: 'playground.image.countN' }, { n: v }),
+                  }))}
                   disabled={!!isInFlight || submitting}
                 />
               </div>
@@ -862,28 +880,28 @@ export default function ImagePanel() {
               <div style={{ display: 'flex', gap: 12 }}>
                 {controls.aspectOpts && (
                   <div style={{ flex: 1 }}>
-                    <div style={labelStyle}>比例 (aspect_ratio)</div>
+                    <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.aspectRatio' })}</div>
                     <Select
                       style={{ width: '100%' }}
                       value={aspectRatio}
                       onChange={setAspectRatio}
                       options={controls.aspectOpts}
                       allowClear
-                      placeholder="使用上游默认"
+                      placeholder={intl.formatMessage({ id: 'playground.image.useUpstreamDefault' })}
                       disabled={!!isInFlight || submitting}
                     />
                   </div>
                 )}
                 {controls.imageSizeOpts && (
                   <div style={{ flex: 1 }}>
-                    <div style={labelStyle}>分辨率档 (image_size)</div>
+                    <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.imageSizeTier' })}</div>
                     <Select
                       style={{ width: '100%' }}
                       value={imageSizeTier}
                       onChange={setImageSizeTier}
                       options={controls.imageSizeOpts}
                       allowClear
-                      placeholder="使用上游默认"
+                      placeholder={intl.formatMessage({ id: 'playground.image.useUpstreamDefault' })}
                       disabled={!!isInFlight || submitting}
                     />
                   </div>
@@ -894,28 +912,28 @@ export default function ImagePanel() {
               <div style={{ display: 'flex', gap: 12 }}>
                 {controls.qualityOpts && (
                   <div style={{ flex: 1 }}>
-                    <div style={labelStyle}>质量 (quality)</div>
+                    <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.quality' })}</div>
                     <Select
                       style={{ width: '100%' }}
                       value={quality}
                       onChange={setQuality}
                       options={controls.qualityOpts}
                       allowClear
-                      placeholder="使用上游默认"
+                      placeholder={intl.formatMessage({ id: 'playground.image.useUpstreamDefault' })}
                       disabled={!!isInFlight || submitting}
                     />
                   </div>
                 )}
                 {controls.styleOpts && (
                   <div style={{ flex: 1 }}>
-                    <div style={labelStyle}>风格 (style)</div>
+                    <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.style' })}</div>
                     <Select
                       style={{ width: '100%' }}
                       value={style}
                       onChange={setStyle}
                       options={controls.styleOpts}
                       allowClear
-                      placeholder="使用上游默认"
+                      placeholder={intl.formatMessage({ id: 'playground.image.useUpstreamDefault' })}
                       disabled={!!isInFlight || submitting}
                     />
                   </div>
@@ -923,10 +941,10 @@ export default function ImagePanel() {
               </div>
             )}
             <div>
-              <div style={labelStyle}>参考图(可选,图生图)</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.refImageLabel' })}</div>
               <Space.Compact style={{ width: '100%' }}>
                 <Input
-                  placeholder="https://... 或 data:image/...;base64,..."
+                  placeholder={intl.formatMessage({ id: 'playground.image.refUrlPlaceholder' })}
                   value={imageURL}
                   onChange={(e) => setImageURL(e.target.value)}
                   allowClear
@@ -938,7 +956,7 @@ export default function ImagePanel() {
                   onClick={addReferenceURL}
                   disabled={!!isInFlight || submitting || !imageURL.trim()}
                 >
-                  添加
+                  {intl.formatMessage({ id: 'playground.image.add' })}
                 </Button>
               </Space.Compact>
               <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -948,12 +966,12 @@ export default function ImagePanel() {
                     loading={uploadingRef}
                     disabled={!!isInFlight || submitting}
                   >
-                    上传参考图
+                    {intl.formatMessage({ id: 'playground.image.uploadRef' })}
                   </Button>
                 </Upload>
                 {referenceImages.length > 0 && (
                   <Tag color="blue" style={{ margin: 0 }}>
-                    {referenceImages.length} 张
+                    {intl.formatMessage({ id: 'playground.image.countImages' }, { n: referenceImages.length })}
                   </Tag>
                 )}
               </div>
@@ -978,16 +996,20 @@ export default function ImagePanel() {
                         disabled={!!isInFlight || submitting}
                         style={referenceDeleteStyle}
                       />
-                      {idx === 0 && <span style={referenceBadgeStyle}>主图</span>}
+                      {idx === 0 && (
+                        <span style={referenceBadgeStyle}>
+                          {intl.formatMessage({ id: 'playground.image.mainImage' })}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
             </div>
             <div>
-              <div style={labelStyle}>提示词</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.image.prompt' })}</div>
               <TextArea
-                placeholder="例如:a watercolor painting of a cat flying over Shanghai at night"
+                placeholder={intl.formatMessage({ id: 'playground.image.promptPlaceholder' })}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 autoSize={{ minRows: 4, maxRows: 8 }}
@@ -1004,10 +1026,10 @@ export default function ImagePanel() {
               disabled={!prompt.trim() || !modelName || !selectedToken || !!isInFlight}
             >
               {submitting
-                ? '提交中...'
+                ? intl.formatMessage({ id: 'playground.image.submitting' })
                 : isInFlight
-                ? `任务进行中 · ${elapsedText}`
-                : '生成图片'}
+                ? intl.formatMessage({ id: 'playground.image.taskInProgress' }, { elapsed: elapsedText })
+                : intl.formatMessage({ id: 'playground.image.generateBtn' })}
             </Button>
           </Space>
         </Card>
@@ -1015,7 +1037,7 @@ export default function ImagePanel() {
         {/* 右侧:任务进度 + 结果 */}
         <Card
           style={{ flex: '1 1 440px', minWidth: 360 }}
-          title={<span>预览</span>}
+          title={<span>{intl.formatMessage({ id: 'playground.image.preview' })}</span>}
           extra={
             task ? (
               <Space size="small">
@@ -1026,7 +1048,7 @@ export default function ImagePanel() {
                       icon={<ReloadOutlined spin={polling} />}
                       onClick={() => fetchOnce(task.id)}
                     >
-                      刷新
+                      {intl.formatMessage({ id: 'playground.image.refresh' })}
                     </Button>
                     <Button
                       size="small"
@@ -1034,13 +1056,13 @@ export default function ImagePanel() {
                       icon={<CloseCircleOutlined />}
                       onClick={cancel}
                     >
-                      取消
+                      {intl.formatMessage({ id: 'common.cancel' })}
                     </Button>
                   </>
                 )}
                 {!isInFlight && (
                   <Button size="small" onClick={reset}>
-                    清空
+                    {intl.formatMessage({ id: 'playground.image.clear' })}
                   </Button>
                 )}
               </Space>
@@ -1054,7 +1076,7 @@ export default function ImagePanel() {
                 imageStyle={{ height: 60 }}
                 description={
                   <span style={{ color: '#999' }}>
-                    输入提示词后点击"生成图片",结果会显示在这里
+                    {intl.formatMessage({ id: 'playground.image.emptyHint' })}
                   </span>
                 }
               />
@@ -1065,7 +1087,7 @@ export default function ImagePanel() {
             <Alert
               type="error"
               showIcon
-              message="提交失败"
+              message={intl.formatMessage({ id: 'playground.image.submitFailed' })}
               description={
                 <pre style={errPreStyle}>{errMsg}</pre>
               }
@@ -1105,7 +1127,7 @@ export default function ImagePanel() {
                 <Alert
                   type="warning"
                   showIcon
-                  message="刷新暂时失败"
+                  message={intl.formatMessage({ id: 'playground.image.refreshTempFailed' })}
                   description={<pre style={errPreStyle}>{errMsg}</pre>}
                   style={{ marginBottom: 14 }}
                 />
@@ -1119,13 +1141,18 @@ export default function ImagePanel() {
                     size="large"
                   />
                   <div style={{ marginTop: 18, color: '#555', fontWeight: 500 }}>
-                    {task.status === 'queued' ? '任务已排队,等待上游执行' : '图像生成中'}
+                    {task.status === 'queued'
+                      ? intl.formatMessage({ id: 'playground.image.queuedHint' })
+                      : intl.formatMessage({ id: 'playground.image.generatingHint' })}
                   </div>
                   <div style={{ marginTop: 6, color: '#888', fontSize: 13 }}>
-                    已用时 <b>{elapsedText}</b> · 自动每 2 秒刷新
+                    {intl.formatMessage(
+                      { id: 'playground.image.elapsedAutoRefresh' },
+                      { elapsed: <b key="e">{elapsedText}</b> },
+                    )}
                   </div>
                   <div style={{ marginTop: 16, color: '#bbb', fontSize: 12 }}>
-                    图像模型通常 3–30 秒出结果,带参考图可能更久;可离开页面稍后回来
+                    {intl.formatMessage({ id: 'playground.image.latencyHint' })}
                   </div>
                 </div>
               )}
@@ -1134,8 +1161,11 @@ export default function ImagePanel() {
               {task.status === 'succeeded' && items.length > 0 && (
                 <div>
                   <div style={{ color: '#52c41a', fontSize: 13, marginBottom: 12 }}>
-                    ✓ 生成完成
-                    {finalLatency ? ` · 用时 ${finalLatency}` : ''} · 共 {items.length} 张
+                    ✓ {intl.formatMessage({ id: 'playground.image.doneTitle' })}
+                    {finalLatency
+                      ? intl.formatMessage({ id: 'playground.image.doneLatency' }, { latency: finalLatency })
+                      : ''}{' '}
+                    {intl.formatMessage({ id: 'playground.image.doneCount' }, { n: items.length })}
                   </div>
                   <Space wrap size="middle">
                     {items.map((it, i) => {
@@ -1170,7 +1200,7 @@ export default function ImagePanel() {
                               alignItems: 'center',
                             }}
                           >
-                            <span>图片 #{i + 1}</span>
+                            <span>{intl.formatMessage({ id: 'playground.image.imageNo' }, { n: i + 1 })}</span>
                             <a
                               href={src}
                               download={browserDownloadName(
@@ -1181,7 +1211,7 @@ export default function ImagePanel() {
                               rel="noreferrer"
                               style={{ color: '#1677ff' }}
                             >
-                              <DownloadOutlined /> 下载
+                              <DownloadOutlined /> {intl.formatMessage({ id: 'playground.image.download' })}
                             </a>
                           </div>
                         </div>
@@ -1195,8 +1225,8 @@ export default function ImagePanel() {
                 <Alert
                   type="info"
                   showIcon
-                  message="任务已完成,但后端尚未返回可访问 URL"
-                  description="请稍后手动刷新一次。"
+                  message={intl.formatMessage({ id: 'playground.image.doneNoUrlTitle' })}
+                  description={intl.formatMessage({ id: 'playground.image.doneNoUrlDesc' })}
                 />
               )}
 
@@ -1207,7 +1237,8 @@ export default function ImagePanel() {
                   showIcon
                   message={
                     <span style={{ fontWeight: 500 }}>
-                      {task.error?.code ? `${task.error.code} · ` : ''}生成失败
+                      {task.error?.code ? `${task.error.code} · ` : ''}
+                      {intl.formatMessage({ id: 'playground.image.generateFailed' })}
                     </span>
                   }
                   description={
@@ -1219,7 +1250,11 @@ export default function ImagePanel() {
               )}
 
               {task.status === 'canceled' && (
-                <Alert type="warning" showIcon message="任务已取消" />
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={intl.formatMessage({ id: 'playground.image.taskCanceled' })}
+                />
               )}
 
               {/* 非进行中的临时刷新报错 */}
@@ -1249,8 +1284,15 @@ export default function ImagePanel() {
           color: '#666',
         }}
       >
-        💡 异步任务接口 <code>/v1/images/generations/async</code>:提交后立即返回 <code>task_id</code>,
-        页面每 2 秒轮询一次,可离开后回来续看。同步 <code>/v1/images/generations</code> 仍保留供 SDK 直连(无需轮询)。
+        💡{' '}
+        {intl.formatMessage(
+          { id: 'playground.image.asyncBanner' },
+          {
+            asyncApi: <code key="a">/v1/images/generations/async</code>,
+            taskId: <code key="t">task_id</code>,
+            syncApi: <code key="s">/v1/images/generations</code>,
+          },
+        )}
       </div>
 
       <MediaHistoryDrawer

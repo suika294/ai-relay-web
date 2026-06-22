@@ -1,17 +1,25 @@
 import {
+  AppstoreOutlined,
+  AudioOutlined,
   ClearOutlined,
   CloseCircleFilled,
   DeleteOutlined,
+  ExperimentOutlined,
   MessageOutlined,
   PaperClipOutlined,
   PictureOutlined,
   PlusOutlined,
   SendOutlined,
+  ShoppingOutlined,
+  SkinOutlined,
   StopOutlined,
+  ThunderboltOutlined,
+  UserOutlined,
+  VideoCameraAddOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Link } from '@umijs/max';
+import { Link, useIntl, useSearchParams } from '@umijs/max';
 import {
   Alert,
   Button,
@@ -27,9 +35,20 @@ import {
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { systemApi, tokenApi } from '@/services/api';
+import { t } from '@/utils/i18n';
 import { apiURL } from '@/utils/request';
+import AdOneClickPanel from './AdOneClickPanel';
+import EffectsPanel from './EffectsPanel';
+import GeneralOneClickPanel from './GeneralOneClickPanel';
 import ImagePanel from './ImagePanel';
+import MultiframePanel from './MultiframePanel';
+import TemplatePanel from './TemplatePanel';
+import ThreeDPanel from './ThreeDPanel';
 import VideoPanel from './VideoPanel';
+import VirtualmanPanel from './VirtualmanPanel';
+import VirtualTryOnPanel from './VirtualTryOnPanel';
+import VoiceClonePanel from './VoiceClonePanel';
+import VoicePanel from './VoicePanel';
 import './playground.css';
 
 const { TextArea } = Input;
@@ -87,7 +106,7 @@ function modelBrand(name?: string): { color: string; letter: string } {
   if (n.startsWith('moonshot') || n.startsWith('kimi'))
     return { color: '#111827', letter: 'K' };
   if (n.startsWith('glm') || n.startsWith('codegeex'))
-    return { color: '#0ea5e9', letter: '智' };
+    return { color: '#0ea5e9', letter: 'Z' };
   if (n.startsWith('deepseek')) return { color: '#4d6bfe', letter: 'D' };
   if (n.startsWith('qwen')) return { color: '#615ced', letter: 'Q' };
   if (n.startsWith('mistral')) return { color: '#fa520f', letter: 'M' };
@@ -159,7 +178,7 @@ function newSession(): Session {
   const now = Date.now();
   return {
     id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
-    title: '新会话',
+    title: t('playground.index.newSession'),
     messages: [],
     createdAt: now,
     updatedAt: now,
@@ -170,13 +189,16 @@ function truncate(s: string, n: number) {
 }
 
 function ChatPanel() {
+  const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
   const [tokens, setTokens] = useState<API.Token[]>([]);
 
   // 配置
   const [modelName, setModelName] = useState<string>();
   const [tokenId, setTokenId] = useState<number>();
-  const [system, setSystem] = useState('你是一个乐于助人的助手。');
+  const [system, setSystem] = useState(() =>
+    intl.formatMessage({ id: 'playground.index.defaultSystemPrompt' }),
+  );
   const [stream, setStream] = useState(true);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
@@ -219,23 +241,43 @@ function ChatPanel() {
     if (arr.length === 0) return;
     const remain = MAX_IMAGES_PER_MSG - pendingImages.length;
     if (remain <= 0) {
-      message.warning(`单条最多 ${MAX_IMAGES_PER_MSG} 张图`);
+      message.warning(
+        intl.formatMessage(
+          { id: 'playground.index.maxImagesPerMsg' },
+          { max: MAX_IMAGES_PER_MSG },
+        ),
+      );
       return;
     }
     const accept = arr.slice(0, remain);
     if (arr.length > remain) {
-      message.warning(`只接受前 ${remain} 张（单条最多 ${MAX_IMAGES_PER_MSG} 张）`);
+      message.warning(
+        intl.formatMessage(
+          { id: 'playground.index.onlyAcceptFirst' },
+          { remain, max: MAX_IMAGES_PER_MSG },
+        ),
+      );
     }
     const urls: string[] = [];
     for (const f of accept) {
       if (f.size > MAX_IMAGE_SIZE) {
-        message.warning(`${f.name || '图片'} 超过 5MB，已跳过`);
+        message.warning(
+          intl.formatMessage(
+            { id: 'playground.index.imageTooLarge' },
+            { name: f.name || intl.formatMessage({ id: 'playground.index.image' }) },
+          ),
+        );
         continue;
       }
       try {
         urls.push(await readFileAsDataURL(f));
       } catch {
-        message.error(`${f.name || '图片'} 读取失败`);
+        message.error(
+          intl.formatMessage(
+            { id: 'playground.index.imageReadFailed' },
+            { name: f.name || intl.formatMessage({ id: 'playground.index.image' }) },
+          ),
+        );
       }
     }
     if (urls.length > 0) setPendingImages((prev) => [...prev, ...urls]);
@@ -299,13 +341,18 @@ function ChatPanel() {
   const appendMessage = (m: Msg) => {
     updateCurrent((s) => {
       const msgs = [...s.messages, m];
-      const isFreshTitle = s.title === '新会话' || !s.title;
+      const isFreshTitle =
+        s.title === intl.formatMessage({ id: 'playground.index.newSession' }) ||
+        !s.title;
       // 文字优先；纯图片消息也给个占位标题，不让侧栏显示"新会话"无法区分
       let title = s.title;
       if (isFreshTitle && m.role === 'user') {
         if (m.content) title = truncate(m.content, 24);
         else if (m.images && m.images.length > 0)
-          title = `[图片] x${m.images.length}`;
+          title = intl.formatMessage(
+            { id: 'playground.index.imageTitle' },
+            { count: m.images.length },
+          );
       }
       return {
         ...s,
@@ -387,7 +434,12 @@ function ChatPanel() {
   };
 
   const clearCurrent = () => {
-    updateCurrent((s) => ({ ...s, messages: [], title: '新会话', updatedAt: Date.now() }));
+    updateCurrent((s) => ({
+      ...s,
+      messages: [],
+      title: intl.formatMessage({ id: 'playground.index.newSession' }),
+      updatedAt: Date.now(),
+    }));
   };
 
   const send = async () => {
@@ -395,11 +447,11 @@ function ChatPanel() {
     // 仅图片无文字也允许发送（图生文场景：直接问"这是什么"）
     if (!text && pendingImages.length === 0) return;
     if (!modelName) {
-      message.warning('请选择模型');
+      message.warning(intl.formatMessage({ id: 'playground.index.selectModelFirst' }));
       return;
     }
     if (!selectedToken) {
-      message.warning('请先创建 API Key');
+      message.warning(intl.formatMessage({ id: 'playground.index.createKeyFirst' }));
       return;
     }
 
@@ -485,14 +537,20 @@ function ChatPanel() {
       } else {
         // 非流式：上游一次返回全量，本地做打字机效果，避免大段内容瞬间糊脸
         const data = await res.json();
-        const content = data?.choices?.[0]?.message?.content ?? '(无内容)';
+        const content =
+        data?.choices?.[0]?.message?.content ??
+        intl.formatMessage({ id: 'playground.index.noContent' });
         const finalModel = data?.model || sentWith;
         await typewriter(content, finalModel, ctrl.signal);
       }
     } catch (e: any) {
       removePendingAssistant();
       if (e?.name === 'AbortError') {
-        appendMessage({ role: 'error', content: '已中断本次请求', model: modelName });
+        appendMessage({
+          role: 'error',
+          content: intl.formatMessage({ id: 'playground.index.requestAborted' }),
+          model: modelName,
+        });
       } else {
         appendMessage({ role: 'error', content: String(e?.message || e), model: modelName });
       }
@@ -513,7 +571,7 @@ function ChatPanel() {
         {/* 左：会话列表 */}
         <div className="pg-sessions">
           <div className="pg-sessions-header">
-            <span>会话记录</span>
+            <span>{intl.formatMessage({ id: 'playground.index.sessionRecords' })}</span>
             <Button
               size="small"
               type="primary"
@@ -525,11 +583,13 @@ function ChatPanel() {
                 color: '#fff',
               }}
             >
-              新建
+              {intl.formatMessage({ id: 'common.create' })}
             </Button>
           </div>
           {sessions.length === 0 ? (
-            <div className="pg-session-empty">暂无会话</div>
+            <div className="pg-session-empty">
+              {intl.formatMessage({ id: 'playground.index.noSessions' })}
+            </div>
           ) : (
             sessions.map((s) => (
               <div
@@ -537,9 +597,16 @@ function ChatPanel() {
                 className={`pg-session-item ${s.id === currentId ? 'active' : ''}`}
                 onClick={() => setCurrentId(s.id)}
               >
-                <div className="pg-session-title">{s.title || '未命名'}</div>
+                <div className="pg-session-title">
+                  {s.title || intl.formatMessage({ id: 'playground.index.untitled' })}
+                </div>
                 <div className="pg-session-meta">
-                  <span>{s.messages.length} 条</span>
+                  <span>
+                    {intl.formatMessage(
+                      { id: 'playground.index.messageCount' },
+                      { count: s.messages.length },
+                    )}
+                  </span>
                   <span>
                     {new Date(s.updatedAt).toLocaleString([], {
                       month: '2-digit',
@@ -550,7 +617,7 @@ function ChatPanel() {
                   </span>
                 </div>
                 <Popconfirm
-                  title="删除此会话？"
+                  title={intl.formatMessage({ id: 'playground.index.deleteSessionConfirm' })}
                   onConfirm={(e) => {
                     e?.stopPropagation?.();
                     deleteSession(s.id);
@@ -574,7 +641,11 @@ function ChatPanel() {
           <div className="pg-msgs" ref={scrollRef}>
             {messages.length === 0 ? (
               <div className="pg-msgs-empty">
-                <Empty description="发一条消息开始对话" />
+                <Empty
+                  description={intl.formatMessage({
+                    id: 'playground.index.startConversation',
+                  })}
+                />
               </div>
             ) : (
               messages.map((m, i) => {
@@ -598,7 +669,7 @@ function ChatPanel() {
                       <div className="pg-err-title">
                         {chip}
                         <span>
-                          请求出错
+                          {intl.formatMessage({ id: 'playground.index.requestError' })}
                           {m.meta?.status ? ` · HTTP ${m.meta.status}` : ''}
                           {m.meta?.code ? ` · code ${m.meta.code}` : ''}
                           {m.model ? ` · ${m.model}` : ''}
@@ -639,13 +710,16 @@ function ChatPanel() {
                       typeof m.hadImages === 'number' &&
                       m.hadImages > 0 && (
                         <div className="pg-msg-img-missing">
-                          🖼️ 此消息附带的 {m.hadImages} 张图片未随会话保存(浏览器存储配额限制),
-                          刷新后无法在历史中查看,但当前会话内的发送已生效。
+                          🖼️{' '}
+                          {intl.formatMessage(
+                            { id: 'playground.index.imagesNotSaved' },
+                            { count: m.hadImages },
+                          )}
                         </div>
                       )}
                     {isPending ? (
                       <span className="pg-thinking">
-                        思考中
+                        {intl.formatMessage({ id: 'playground.index.thinking' })}
                         <span className="pg-thinking-dot" />
                         <span className="pg-thinking-dot" />
                         <span className="pg-thinking-dot" />
@@ -672,7 +746,7 @@ function ChatPanel() {
                       type="button"
                       className="pg-pending-img-del"
                       onClick={() => removePendingImage(k)}
-                      title="移除"
+                      title={intl.formatMessage({ id: 'playground.index.remove' })}
                     >
                       <CloseCircleFilled />
                     </button>
@@ -684,7 +758,7 @@ function ChatPanel() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onPaste={onPaste}
-              placeholder="输入消息；可粘贴/上传图片；Ctrl/Cmd + Enter 发送"
+              placeholder={intl.formatMessage({ id: 'playground.index.inputPlaceholder' })}
               autoSize={{ minRows: 2, maxRows: 6 }}
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -713,20 +787,20 @@ function ChatPanel() {
                   onClick={clearCurrent}
                   disabled={messages.length === 0}
                 >
-                  清空当前
+                  {intl.formatMessage({ id: 'playground.index.clearCurrent' })}
                 </Button>
                 <Button
                   icon={<PaperClipOutlined />}
                   onClick={() => fileInputRef.current?.click()}
                   disabled={loading || pendingImages.length >= MAX_IMAGES_PER_MSG}
-                  title="上传图片（支持粘贴）"
+                  title={intl.formatMessage({ id: 'playground.index.uploadImageTip' })}
                 >
-                  图片
+                  {intl.formatMessage({ id: 'playground.index.imageBtn' })}
                 </Button>
               </Space>
               {loading ? (
                 <Button danger icon={<StopOutlined />} onClick={stop}>
-                  中断
+                  {intl.formatMessage({ id: 'playground.index.abort' })}
                 </Button>
               ) : (
                 <Button
@@ -735,7 +809,7 @@ function ChatPanel() {
                   onClick={send}
                   disabled={!input.trim() && pendingImages.length === 0}
                 >
-                  发送
+                  {intl.formatMessage({ id: 'playground.index.send' })}
                 </Button>
               )}
             </Space>
@@ -744,7 +818,7 @@ function ChatPanel() {
 
         {/* 右：设置 */}
         <div className="pg-settings">
-          <h4>设置</h4>
+          <h4>{intl.formatMessage({ id: 'playground.index.settings' })}</h4>
           {tokens.length === 0 && (
             <Alert
               type="warning"
@@ -752,7 +826,10 @@ function ChatPanel() {
               style={{ marginBottom: 12 }}
               message={
                 <span>
-                  还没有可用的 API Key。<Link to="/console/tokens">去创建</Link>
+                  {intl.formatMessage({ id: 'playground.index.noKeyYet' })}
+                  <Link to="/console/tokens">
+                    {intl.formatMessage({ id: 'playground.index.goCreate' })}
+                  </Link>
                 </span>
               }
             />
@@ -760,7 +837,9 @@ function ChatPanel() {
 
           <Space direction="vertical" style={{ width: '100%' }}>
             <div>
-              <div style={{ fontSize: 12, color: '#666' }}>模型</div>
+              <div style={{ fontSize: 12, color: '#666' }}>
+                {intl.formatMessage({ id: 'playground.index.model' })}
+              </div>
               <Select
                 value={modelName}
                 onChange={setModelName}
@@ -768,7 +847,7 @@ function ChatPanel() {
                 style={{ width: '100%' }}
                 showSearch
                 optionFilterProp="label"
-                placeholder="选择模型"
+                placeholder={intl.formatMessage({ id: 'playground.index.selectModel' })}
               />
             </div>
 
@@ -777,12 +856,12 @@ function ChatPanel() {
               <Select
                 value={tokenId}
                 onChange={setTokenId}
-                options={tokens.map((t) => ({
-                  value: t.id,
-                  label: `${t.name || '未命名'} (${t.key_prefix}***)`,
+                options={tokens.map((tk) => ({
+                  value: tk.id,
+                  label: `${tk.name || intl.formatMessage({ id: 'playground.index.untitled' })} (${tk.key_prefix}***)`,
                 }))}
                 style={{ width: '100%' }}
-                placeholder="选择 Token"
+                placeholder={intl.formatMessage({ id: 'playground.index.selectToken' })}
               />
             </div>
 
@@ -792,12 +871,16 @@ function ChatPanel() {
                 value={system}
                 onChange={(e) => setSystem(e.target.value)}
                 autoSize={{ minRows: 2, maxRows: 6 }}
-                placeholder="可选；为空则不发送"
+                placeholder={intl.formatMessage({
+                  id: 'playground.index.systemPromptPlaceholder',
+                })}
               />
             </div>
 
             <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13 }}>流式输出</span>
+              <span style={{ fontSize: 13 }}>
+                {intl.formatMessage({ id: 'playground.index.streamOutput' })}
+              </span>
               <Switch checked={stream} onChange={setStream} />
             </Space>
 
@@ -834,19 +917,25 @@ function ChatPanel() {
 // ---------- 外壳:Tabs 切换 Chat / 图像 / 视频 ----------
 
 export default function Playground() {
-  return (
-    <PageContainer
-      title="Playground"
-      subTitle="在线调试对话 / 图像 / 视频 API(走你自己的 Key,请求和第三方集成完全一致)"
-    >
-      <Tabs
-        defaultActiveKey="chat"
-        items={[
+  const intl = useIntl();
+  const [params, setParams] = useSearchParams();
+  const activeTab = params.get('tab') || 'chat';
+  const changeTab = (key: string) => {
+    const next = new URLSearchParams(params);
+    if (key === 'chat') next.delete('tab');
+    else next.set('tab', key);
+    setParams(next);
+  };
+
+  // 测试期临时全部放开。需要重新隐藏时,把对应 key 填回此集合即可:
+  //   ad-one-click / template / virtual-tryon / effects / general-one-click / multiframe
+  const HIDDEN_TABS = new Set<string>();
+  const tabItems = [
           {
             key: 'chat',
             label: (
               <span>
-                <MessageOutlined /> 对话
+                <MessageOutlined /> {intl.formatMessage({ id: 'playground.index.tabChat' })}
               </span>
             ),
             children: <ChatPanel />,
@@ -855,7 +944,7 @@ export default function Playground() {
             key: 'image',
             label: (
               <span>
-                <PictureOutlined /> 图像
+                <PictureOutlined /> {intl.formatMessage({ id: 'playground.index.tabImage' })}
               </span>
             ),
             children: <ImagePanel />,
@@ -864,12 +953,114 @@ export default function Playground() {
             key: 'video',
             label: (
               <span>
-                <VideoCameraOutlined /> 视频
+                <VideoCameraOutlined /> {intl.formatMessage({ id: 'playground.index.tabVideo' })}
               </span>
             ),
             children: <VideoPanel />,
           },
-        ]}
+          {
+            key: 'effects',
+            label: (
+              <span>
+                <ThunderboltOutlined /> {intl.formatMessage({ id: 'playground.index.tabEffects' })}
+              </span>
+            ),
+            children: <EffectsPanel />,
+          },
+          {
+            key: 'multiframe',
+            label: (
+              <span>
+                <VideoCameraAddOutlined />{' '}
+                {intl.formatMessage({ id: 'playground.index.tabMultiframe' })}
+              </span>
+            ),
+            children: <MultiframePanel />,
+          },
+          {
+            key: 'template',
+            label: (
+              <span>
+                <AppstoreOutlined /> {intl.formatMessage({ id: 'playground.index.tabTemplate' })}
+              </span>
+            ),
+            children: <TemplatePanel />,
+          },
+          {
+            key: 'ad-one-click',
+            label: (
+              <span>
+                <ShoppingOutlined /> {intl.formatMessage({ id: 'playground.index.tabAdOneClick' })}
+              </span>
+            ),
+            children: <AdOneClickPanel />,
+          },
+          {
+            key: 'general-one-click',
+            label: (
+              <span>
+                <VideoCameraOutlined />{' '}
+                {intl.formatMessage({ id: 'playground.index.tabGeneralOneClick' })}
+              </span>
+            ),
+            children: <GeneralOneClickPanel />,
+          },
+          {
+            key: 'virtual-tryon',
+            label: (
+              <span>
+                <SkinOutlined /> {intl.formatMessage({ id: 'playground.index.tabVirtualTryon' })}
+              </span>
+            ),
+            children: <VirtualTryOnPanel />,
+          },
+          {
+            key: '3d',
+            label: (
+              <span>
+                <ExperimentOutlined /> 3D
+              </span>
+            ),
+            children: <ThreeDPanel />,
+          },
+          {
+            key: 'audio',
+            label: (
+              <span>
+                <AudioOutlined /> {intl.formatMessage({ id: 'playground.index.tabAudio' })}
+              </span>
+            ),
+            children: <VoicePanel />,
+          },
+          {
+            key: 'voice-clone',
+            label: (
+              <span>
+                <AudioOutlined /> {intl.formatMessage({ id: 'playground.index.tabVoiceClone' })}
+              </span>
+            ),
+            children: <VoiceClonePanel />,
+          },
+          {
+            key: 'virtualman',
+            label: (
+              <span>
+                <UserOutlined /> {intl.formatMessage({ id: 'playground.index.tabVirtualman' })}
+              </span>
+            ),
+            children: <VirtualmanPanel />,
+          },
+  ];
+
+  return (
+    <PageContainer
+      title="Playground"
+      subTitle={intl.formatMessage({ id: 'playground.index.subTitle' })}
+    >
+      <Tabs
+        activeKey={activeTab}
+        onChange={changeTab}
+        items={tabItems.filter((t) => !HIDDEN_TABS.has(t.key))}
       />
     </PageContainer>
   );

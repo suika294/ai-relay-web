@@ -9,6 +9,8 @@
 //   ProTable 有 search/toolbar/pagination 一整套 header,抽屉里窄、高度也有限,
 //   自己手写 List + "加载更多"按钮反而更合适。
 import { useEffect, useState } from 'react';
+import { useIntl } from '@umijs/max';
+import { t } from '@/utils/i18n';
 import {
   Alert,
   Button,
@@ -33,11 +35,11 @@ const { Text } = Typography;
 const PAGE_SIZE = 10;
 
 const statusMeta: Record<string, { text: string; color: string }> = {
-  queued: { text: '排队', color: 'default' },
-  running: { text: '生成中', color: 'processing' },
-  succeeded: { text: '完成', color: 'success' },
-  failed: { text: '失败', color: 'error' },
-  canceled: { text: '已取消', color: 'warning' },
+  queued: { text: t('playground.mediaHistory.statusQueued'), color: 'default' },
+  running: { text: t('playground.mediaHistory.statusRunning'), color: 'processing' },
+  succeeded: { text: t('playground.mediaHistory.statusSucceeded'), color: 'success' },
+  failed: { text: t('playground.mediaHistory.statusFailed'), color: 'error' },
+  canceled: { text: t('playground.mediaHistory.statusCanceled'), color: 'warning' },
 };
 
 // 从 data[0] 里挖出 <img>/<video> 可直接用的资源地址。
@@ -53,9 +55,11 @@ function primaryURL(t: API.MediaTask): string | undefined {
 // 简短的 "xx 前" / "HH:mm" 时间标签。列表只求辨识,不必精确。
 function relTime(unixSec: number): string {
   const diff = Date.now() / 1000 - unixSec;
-  if (diff < 60) return '刚刚';
-  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`;
+  if (diff < 60) return t('playground.mediaHistory.timeJustNow');
+  if (diff < 3600)
+    return t('playground.mediaHistory.timeMinutesAgo', { n: Math.floor(diff / 60) });
+  if (diff < 86400)
+    return t('playground.mediaHistory.timeHoursAgo', { n: Math.floor(diff / 3600) });
   const d = new Date(unixSec * 1000);
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
@@ -74,6 +78,7 @@ export default function MediaHistoryDrawer({
   onClose,
   onReuse,
 }: MediaHistoryDrawerProps) {
+  const intl = useIntl();
   const [list, setList] = useState<API.MediaTask[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -97,7 +102,7 @@ export default function MediaHistoryDrawer({
       const fn = kind === 'image' ? userApi.images : userApi.videos;
       const res = await fn({ page: p, size: PAGE_SIZE });
       if (res.code !== 0) {
-        setErr(res.message || '加载失败');
+        setErr(res.message || intl.formatMessage({ id: 'playground.mediaHistory.loadFailed' }));
         return;
       }
       const items = res.data?.list ?? [];
@@ -112,7 +117,10 @@ export default function MediaHistoryDrawer({
   };
 
   const canLoadMore = list.length < total;
-  const title = kind === 'image' ? '图像历史' : '视频历史';
+  const title =
+    kind === 'image'
+      ? intl.formatMessage({ id: 'playground.mediaHistory.titleImage' })
+      : intl.formatMessage({ id: 'playground.mediaHistory.titleVideo' });
 
   return (
     <Drawer
@@ -120,7 +128,7 @@ export default function MediaHistoryDrawer({
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>{title}</span>
           <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
-            共 {total} 条
+            {intl.formatMessage({ id: 'playground.mediaHistory.totalCount' }, { total })}
           </Text>
           <Button
             size="small"
@@ -129,7 +137,7 @@ export default function MediaHistoryDrawer({
             loading={loading && list.length === 0}
             style={{ marginLeft: 'auto' }}
           >
-            刷新
+            {intl.formatMessage({ id: 'playground.mediaHistory.refresh' })}
           </Button>
         </div>
       }
@@ -151,7 +159,13 @@ export default function MediaHistoryDrawer({
       )}
 
       {list.length === 0 && !loading && !err && (
-        <Empty description={<Text type="secondary">暂无历史记录</Text>} />
+        <Empty
+          description={
+            <Text type="secondary">
+              {intl.formatMessage({ id: 'playground.mediaHistory.empty' })}
+            </Text>
+          }
+        />
       )}
 
       <List
@@ -169,7 +183,7 @@ export default function MediaHistoryDrawer({
             loading={loading}
             size="small"
           >
-            加载更多
+            {intl.formatMessage({ id: 'playground.mediaHistory.loadMore' })}
           </Button>
         </div>
       )}
@@ -192,6 +206,7 @@ function HistoryRow({
   kind: 'image' | 'video';
   onReuse?: (task: API.MediaTask) => void;
 }) {
+  const intl = useIntl();
   const src = primaryURL(task);
   const m = statusMeta[task.status] || { text: task.status, color: 'default' };
 
@@ -223,7 +238,7 @@ function HistoryRow({
               width={88}
               height={88}
               style={{ objectFit: 'cover' }}
-              preview={{ mask: '预览' }}
+              preview={{ mask: intl.formatMessage({ id: 'playground.mediaHistory.preview' }) }}
             />
           )}
           {kind === 'video' && src && (
@@ -237,7 +252,9 @@ function HistoryRow({
           )}
           {!src && (
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {task.status === 'failed' ? '失败' : '无产物'}
+              {task.status === 'failed'
+                ? intl.formatMessage({ id: 'playground.mediaHistory.statusFailed' })
+                : intl.formatMessage({ id: 'playground.mediaHistory.noOutput' })}
             </Text>
           )}
         </div>
@@ -272,7 +289,11 @@ function HistoryRow({
             }}
             title={task.prompt}
           >
-            {task.prompt || <Text type="secondary">(无提示词)</Text>}
+            {task.prompt || (
+              <Text type="secondary">
+                {intl.formatMessage({ id: 'playground.mediaHistory.noPrompt' })}
+              </Text>
+            )}
           </div>
           <div style={{ marginTop: 4, fontSize: 11, color: '#999' }}>
             {task.model}
@@ -304,7 +325,7 @@ function HistoryRow({
                 target="_blank"
                 rel="noreferrer"
               >
-                播放
+                {intl.formatMessage({ id: 'playground.mediaHistory.play' })}
               </Button>
             )}
             {src && (
@@ -320,14 +341,14 @@ function HistoryRow({
                     target="_blank"
                     download={browserDownloadName(src, filename)}
                   >
-                    下载
+                    {intl.formatMessage({ id: 'playground.mediaHistory.download' })}
                   </Button>
                 );
               })()
             )}
             {task.prompt && onReuse && (
               <Button size="small" type="link" onClick={() => onReuse(task)}>
-                重用提示词
+                {intl.formatMessage({ id: 'playground.mediaHistory.reusePrompt' })}
               </Button>
             )}
           </div>

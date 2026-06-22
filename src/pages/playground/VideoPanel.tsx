@@ -27,7 +27,9 @@ import {
 } from 'antd';
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
+import { useIntl } from '@umijs/max';
 import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { t } from '@/utils/i18n';
 import {
   browserDownloadName,
   isAuthenticatedGeminiDownloadURL,
@@ -53,27 +55,27 @@ function extractErrMsg(raw: string, httpStatus: number): string {
 function friendlyVideoError(msg: string): string {
   if (/invalid_image_url|Doubao Seedance requires .*publicly reachable/i.test(msg)) {
     return [
-      'Doubao Seedance 的参考图必须是公网可访问的 http(s) 图片 URL。data/base64、localhost、内网地址、未配置公网访问的上传素材都不能作为 Ark image_url。',
-      '请配置公网 storage/CDN,或在参考图输入框里填写公网图片 URL。',
-      `原始错误: ${msg}`,
+      t('playground.video.errSeedancePublicUrl'),
+      t('playground.video.errSeedancePublicUrlHint'),
+      t('playground.video.errRawError', { msg }),
     ].join('\n\n');
   }
   if (/ModelNotOpen|has not activated the model/i.test(msg)) {
     return [
-      '上游 Ark 账号未开通当前 Doubao Seedance 模型。请在火山 Ark 控制台启用该模型,或在渠道配置 endpoint_id 指向已开通的专属推理接入点。',
-      `原始错误: ${msg}`,
+      t('playground.video.errModelNotOpen'),
+      t('playground.video.errRawError', { msg }),
     ].join('\n\n');
   }
   if (/gemini (veo )?image .*fetch status=404/i.test(msg)) {
     return [
-      '参考图 URL 无法被后端读取(HTTP 404)。如果这是 Playground 上传的图片,请确认 /api 和 /v1 指向同一个后端,然后重新上传参考图再提交。',
-      `原始错误: ${msg}`,
+      t('playground.video.errRefUrl404'),
+      t('playground.video.errRawError', { msg }),
     ].join('\n\n');
   }
   if (/trying to proxy|econnrefused|econnreset|socket hang up/i.test(msg)) {
     return [
-      '前端开发代理暂时连不上后端。自动刷新会继续重试;如果一直出现,请确认后端服务已启动,并检查 UMI_DEV_PROXY_TARGET 或 UMI_APP_API_BASE_URL 是否指向同一个后端。',
-      `原始错误: ${msg}`,
+      t('playground.video.errDevProxy'),
+      t('playground.video.errRawError', { msg }),
     ].join('\n\n');
   }
   return msg;
@@ -116,15 +118,15 @@ type ReferenceImage = {
 };
 
 const VIDEO_ROLE_OPTIONS: { value: VideoImageRole; label: string }[] = [
-  { value: 'first_frame', label: '首帧' },
-  { value: 'last_frame', label: '尾帧' },
-  { value: 'reference', label: '参考' },
+  { value: 'first_frame', label: t('playground.video.roleFirstFrame') },
+  { value: 'last_frame', label: t('playground.video.roleLastFrame') },
+  { value: 'reference', label: t('playground.video.roleReference') },
 ];
 
 const VIDEO_ROLE_BADGE: Record<VideoImageRole, { text: string; bg: string }> = {
-  first_frame: { text: '首帧', bg: 'rgba(22,119,255,0.92)' },
-  last_frame: { text: '尾帧', bg: 'rgba(82,196,26,0.92)' },
-  reference: { text: '参考', bg: 'rgba(250,140,22,0.92)' },
+  first_frame: { text: t('playground.video.roleFirstFrame'), bg: 'rgba(22,119,255,0.92)' },
+  last_frame: { text: t('playground.video.roleLastFrame'), bg: 'rgba(82,196,26,0.92)' },
+  reference: { text: t('playground.video.roleReference'), bg: 'rgba(250,140,22,0.92)' },
 };
 
 function hasPrivateVideoURL(t?: VideoTask | null): boolean {
@@ -193,16 +195,17 @@ function statusColor(s: string): 'default' | 'processing' | 'success' | 'error' 
 
 function statusText(s: string): string {
   const m: Record<string, string> = {
-    queued: '排队中',
-    running: '生成中',
-    succeeded: '已完成',
-    failed: '失败',
-    canceled: '已取消',
+    queued: t('playground.video.statusQueued'),
+    running: t('playground.video.statusRunning'),
+    succeeded: t('playground.video.statusSucceeded'),
+    failed: t('playground.video.statusFailed'),
+    canceled: t('playground.video.statusCanceled'),
   };
   return m[s] || s;
 }
 
 export default function VideoPanel() {
+  const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
   const [tokens, setTokens] = useState<API.Token[]>([]);
   const [modelName, setModelName] = useState<string>();
@@ -282,9 +285,9 @@ export default function VideoPanel() {
 
   const addReferenceURL = () => {
     const url = imageURL.trim();
-    if (!url) return message.warning('请输入参考图 URL');
+    if (!url) return message.warning(intl.formatMessage({ id: 'playground.video.warnInputRefUrl' }));
     if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
-      return message.warning('当前模型的参考图必须是真实公网可访问的 http(s) 图片 URL,不能使用示例/localhost/内网地址');
+      return message.warning(intl.formatMessage({ id: 'playground.video.warnPublicRefUrl' }));
     }
     setReferenceImages((prev) => {
       if (prev.some((x) => x.url === url)) return prev;
@@ -293,7 +296,7 @@ export default function VideoPanel() {
         {
           uid: `url-${Date.now()}`,
           url,
-          name: '外部 URL',
+          name: intl.formatMessage({ id: 'playground.video.externalUrlName' }),
           source: 'url',
           role: defaultRoleForNew(prev),
         },
@@ -328,7 +331,7 @@ export default function VideoPanel() {
     showUploadList: false,
     beforeUpload: (file) => {
       if (file.type && !file.type.startsWith('image/')) {
-        message.warning('请上传图片文件');
+        message.warning(intl.formatMessage({ id: 'playground.video.warnUploadImageOnly' }));
         return Upload.LIST_IGNORE;
       }
       return true;
@@ -342,19 +345,19 @@ export default function VideoPanel() {
           purpose: 'i2v_reference',
         });
         if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || '上传失败');
+          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.video.uploadFailed' }));
         }
 
         let url = uploaded.data.public_url;
         if (!url) {
           const detail = await assetApi.detail(uploaded.data.id);
           if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || '获取素材 URL 失败');
+            throw new Error(detail.message || intl.formatMessage({ id: 'playground.video.fetchAssetUrlFailed' }));
           }
           url = detail.data.url;
         }
         if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
-          message.warning('当前模型不能使用未配置公网访问的上传素材,请填写真实公网图片 URL 或配置 storage/CDN');
+          message.warning(intl.formatMessage({ id: 'playground.video.warnUploadNeedPublic' }));
           onSuccess?.(uploaded as any);
           return;
         }
@@ -367,16 +370,16 @@ export default function VideoPanel() {
             uid: `asset-${assetID}-${Date.now()}`,
             assetId: assetID,
             url,
-            name: f.name || assetFilename || '参考图',
+            name: f.name || assetFilename || intl.formatMessage({ id: 'playground.video.refImageName' }),
             source: 'upload',
             role: defaultRoleForNew(prev),
           };
           return [...prev, item];
         });
-        message.success('参考图已添加');
+        message.success(intl.formatMessage({ id: 'playground.video.refImageAdded' }));
         onSuccess?.(uploaded as any);
       } catch (e: any) {
-        message.error(e?.message || '上传失败');
+        message.error(e?.message || intl.formatMessage({ id: 'playground.video.uploadFailed' }));
         onError?.(e);
       } finally {
         setUploadingRef(false);
@@ -415,7 +418,7 @@ export default function VideoPanel() {
       if (!res.ok) {
         const msg = extractErrMsg(text, res.status);
         if (auto && isTransientPollError(res.status, msg)) {
-          setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+          setErrMsg(intl.formatMessage({ id: 'playground.video.autoRefreshRetry' }, { msg }));
           schedulePoll(id);
           return;
         }
@@ -433,7 +436,7 @@ export default function VideoPanel() {
     } catch (e: any) {
       const msg = String(e?.message || e);
       if (auto && isTransientPollError(0, msg)) {
-        setErrMsg(`自动刷新暂时失败,稍后继续重试: ${msg}`);
+        setErrMsg(intl.formatMessage({ id: 'playground.video.autoRefreshRetry' }, { msg }));
         schedulePoll(id);
         return;
       }
@@ -445,17 +448,17 @@ export default function VideoPanel() {
 
   useEffect(() => {
     if (!task || !selectedToken || !hasPrivateVideoURL(task)) return;
-    setErrMsg('历史缓存里仍是上游私有下载地址,正在重新获取转存后的 URL');
+    setErrMsg(intl.formatMessage({ id: 'playground.video.refetchingTransferredUrl' }));
     fetchOnce(task.id, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, task?.data?.[0]?.url, selectedToken?.id]);
 
   const submit = async () => {
-    if (!prompt.trim()) return message.warning('请输入提示词');
-    if (!modelName) return message.warning('请选择模型');
-    if (!selectedToken) return message.warning('请先创建 API Key');
+    if (!prompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.video.warnInputPrompt' }));
+    if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.video.warnSelectModel' }));
+    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.video.warnCreateKey' }));
     if (!tokenAllowsModel)
-      return message.warning(`当前 Key 限制了可用模型,不包含 ${modelName}`);
+      return message.warning(intl.formatMessage({ id: 'playground.video.warnKeyModelLimit' }, { model: modelName }));
 
     setSubmitting(true);
     setErrMsg(null);
@@ -479,7 +482,7 @@ export default function VideoPanel() {
       if (requiresPublicReferenceURL) {
         const invalid = buckets.find((b) => !isPublicHTTPImageURL(b.url));
         if (invalid) {
-          message.warning('当前模型的参考图必须是真实公网可访问的 http(s) 图片 URL,不能使用示例/localhost/内网地址');
+          message.warning(intl.formatMessage({ id: 'playground.video.warnPublicRefUrl' }));
           return;
         }
       }
@@ -574,7 +577,7 @@ export default function VideoPanel() {
           style={{ flex: '1 1 440px', minWidth: 360 }}
           title={
             <span>
-              <VideoCameraOutlined /> 视频生成
+              <VideoCameraOutlined /> {intl.formatMessage({ id: 'playground.video.title' })}
             </span>
           }
           extra={
@@ -585,7 +588,7 @@ export default function VideoPanel() {
                 icon={<HistoryOutlined />}
                 onClick={() => setHistoryOpen(true)}
               >
-                历史
+                {intl.formatMessage({ id: 'playground.video.history' })}
               </Button>
               <span style={{ color: '#888', fontSize: 12 }}>
                 POST /v1/videos/generations
@@ -595,10 +598,10 @@ export default function VideoPanel() {
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
-              <div style={labelStyle}>模型</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.modelLabel' })}</div>
               <Select
                 style={{ width: '100%' }}
-                placeholder="选择视频模型"
+                placeholder={intl.formatMessage({ id: 'playground.video.modelPlaceholder' })}
                 options={models}
                 value={modelName}
                 onChange={setModelName}
@@ -608,10 +611,10 @@ export default function VideoPanel() {
               />
             </div>
             <div>
-              <div style={labelStyle}>API Key</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.apiKeyLabel' })}</div>
               <Select
                 style={{ width: '100%' }}
-                placeholder="选择 API Key"
+                placeholder={intl.formatMessage({ id: 'playground.video.apiKeyPlaceholder' })}
                 options={tokens.map((t) => ({
                   value: t.id,
                   label: `${t.name} (${t.key_prefix}***)`,
@@ -622,29 +625,29 @@ export default function VideoPanel() {
               />
               {selectedToken && !tokenAllowsModel && (
                 <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  当前 Key 限制了可用模型,不包含 {modelName}
+                  {intl.formatMessage({ id: 'playground.video.warnKeyModelLimit' }, { model: modelName })}
                 </div>
               )}
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
-                <div style={labelStyle}>时长</div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.durationLabel' })}</div>
                 <InputNumber
                   min={1}
                   max={60}
                   value={duration}
                   onChange={(v) => setDuration(v ?? undefined)}
-                  addonAfter="秒"
+                  addonAfter={intl.formatMessage({ id: 'playground.video.durationUnit' })}
                   style={{ width: '100%' }}
                   disabled={!!isInFlight || submitting}
                 />
               </div>
               <div style={{ flex: 1 }}>
-                <div style={labelStyle}>分辨率</div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.resolutionLabel' })}</div>
                 <Select
                   style={{ width: '100%' }}
                   allowClear
-                  placeholder="分辨率"
+                  placeholder={intl.formatMessage({ id: 'playground.video.resolutionLabel' })}
                   value={resolution}
                   onChange={setResolution}
                   options={[
@@ -657,10 +660,10 @@ export default function VideoPanel() {
               </div>
             </div>
             <div>
-              <div style={labelStyle}>参考图(可选,图生视频)</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.refImageLabel' })}</div>
               <Space.Compact style={{ width: '100%' }}>
                 <Input
-                  placeholder={requiresPublicReferenceURL ? '需要真实公网 https:// 图片 URL' : 'https://... 或 data:image/...;base64,...'}
+                  placeholder={requiresPublicReferenceURL ? intl.formatMessage({ id: 'playground.video.refUrlPlaceholderPublic' }) : intl.formatMessage({ id: 'playground.video.refUrlPlaceholder' })}
                   value={imageURL}
                   onChange={(e) => setImageURL(e.target.value)}
                   allowClear
@@ -672,7 +675,7 @@ export default function VideoPanel() {
                   onClick={addReferenceURL}
                   disabled={!!isInFlight || submitting || !imageURL.trim()}
                 >
-                  添加
+                  {intl.formatMessage({ id: 'playground.video.addBtn' })}
                 </Button>
               </Space.Compact>
               <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -682,12 +685,12 @@ export default function VideoPanel() {
                     loading={uploadingRef}
                     disabled={!!isInFlight || submitting}
                   >
-                    上传参考图
+                    {intl.formatMessage({ id: 'playground.video.uploadRefBtn' })}
                   </Button>
                 </Upload>
                 {referenceImages.length > 0 && (
                   <Tag color="blue" style={{ margin: 0 }}>
-                    {referenceImages.length} 张
+                    {intl.formatMessage({ id: 'playground.video.imageCount' }, { count: referenceImages.length })}
                   </Tag>
                 )}
               </div>
@@ -734,9 +737,9 @@ export default function VideoPanel() {
               )}
             </div>
             <div>
-              <div style={labelStyle}>提示词</div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.promptLabel' })}</div>
               <TextArea
-                placeholder="例如:a cat wearing sunglasses dancing in front of the Eiffel Tower"
+                placeholder={intl.formatMessage({ id: 'playground.video.promptPlaceholder' })}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 autoSize={{ minRows: 4, maxRows: 8 }}
@@ -752,7 +755,11 @@ export default function VideoPanel() {
               loading={submitting}
               disabled={!prompt.trim() || !modelName || !selectedToken || !!isInFlight}
             >
-              {submitting ? '提交中...' : isInFlight ? `任务进行中 · ${elapsedText}` : '提交任务'}
+              {submitting
+                ? intl.formatMessage({ id: 'playground.video.submitting' })
+                : isInFlight
+                ? intl.formatMessage({ id: 'playground.video.taskInProgress' }, { elapsed: elapsedText })
+                : intl.formatMessage({ id: 'playground.video.submitBtn' })}
             </Button>
           </Space>
         </Card>
@@ -760,7 +767,7 @@ export default function VideoPanel() {
         {/* 右侧:任务进度 + 结果 */}
         <Card
           style={{ flex: '1 1 440px', minWidth: 360 }}
-          title={<span>任务进度</span>}
+          title={<span>{intl.formatMessage({ id: 'playground.video.taskProgress' })}</span>}
           extra={
             task ? (
               <Space size="small">
@@ -771,7 +778,7 @@ export default function VideoPanel() {
                       icon={<ReloadOutlined spin={polling} />}
                       onClick={() => fetchOnce(task.id)}
                     >
-                      刷新
+                      {intl.formatMessage({ id: 'playground.video.refreshBtn' })}
                     </Button>
                     <Button
                       size="small"
@@ -779,13 +786,13 @@ export default function VideoPanel() {
                       icon={<CloseCircleOutlined />}
                       onClick={cancel}
                     >
-                      取消
+                      {intl.formatMessage({ id: 'common.cancel' })}
                     </Button>
                   </>
                 )}
                 {!isInFlight && (
                   <Button size="small" onClick={reset}>
-                    清空
+                    {intl.formatMessage({ id: 'playground.video.clearBtn' })}
                   </Button>
                 )}
               </Space>
@@ -799,7 +806,7 @@ export default function VideoPanel() {
                 imageStyle={{ height: 60 }}
                 description={
                   <span style={{ color: '#999' }}>
-                    提交任务后,进度和视频会显示在这里
+                    {intl.formatMessage({ id: 'playground.video.emptyHint' })}
                   </span>
                 }
               />
@@ -810,7 +817,7 @@ export default function VideoPanel() {
             <Alert
               type="error"
               showIcon
-              message="提交失败"
+              message={intl.formatMessage({ id: 'playground.video.submitFailed' })}
               description={errMsg}
               style={{ marginTop: 4 }}
             />
@@ -848,7 +855,7 @@ export default function VideoPanel() {
                 <Alert
                   type="warning"
                   showIcon
-                  message="刷新暂时失败"
+                  message={intl.formatMessage({ id: 'playground.video.refreshTempFailed' })}
                   description={errMsg}
                   style={{ marginBottom: 14 }}
                 />
@@ -862,13 +869,18 @@ export default function VideoPanel() {
                     size="large"
                   />
                   <div style={{ marginTop: 18, color: '#555', fontWeight: 500 }}>
-                    {task.status === 'queued' ? '任务已排队,等待上游执行' : '视频正在生成中'}
+                    {task.status === 'queued'
+                      ? intl.formatMessage({ id: 'playground.video.statusQueuedHint' })
+                      : intl.formatMessage({ id: 'playground.video.statusRunningHint' })}
                   </div>
                   <div style={{ marginTop: 6, color: '#888', fontSize: 13 }}>
-                    已用时 <b>{elapsedText}</b> · 自动每 5 秒刷新
+                    {intl.formatMessage(
+                      { id: 'playground.video.elapsedAutoRefresh' },
+                      { elapsed: <b key="e">{elapsedText}</b> },
+                    )}
                   </div>
                   <div style={{ marginTop: 16, color: '#bbb', fontSize: 12 }}>
-                    视频模型通常 10 秒–数分钟出结果,可离开页面稍后回来
+                    {intl.formatMessage({ id: 'playground.video.modelTimeHint' })}
                   </div>
                 </div>
               )}
@@ -885,7 +897,13 @@ export default function VideoPanel() {
                           marginBottom: 10,
                         }}
                       >
-                        ✓ 生成完成{finalLatency ? ` · 用时 ${finalLatency}` : ''}
+                        ✓ {intl.formatMessage({ id: 'playground.video.generated' })}
+                        {finalLatency
+                          ? intl.formatMessage(
+                              { id: 'playground.video.generatedLatency' },
+                              { latency: finalLatency },
+                            )
+                          : ''}
                       </div>
                       <video
                         key={videoURL}
@@ -908,7 +926,7 @@ export default function VideoPanel() {
                           target="_blank"
                           rel="noreferrer"
                         >
-                          <Button icon={<DownloadOutlined />}>下载视频</Button>
+                          <Button icon={<DownloadOutlined />}>{intl.formatMessage({ id: 'playground.video.downloadBtn' })}</Button>
                         </a>
                       </div>
                     </div>
@@ -920,8 +938,8 @@ export default function VideoPanel() {
                 <Alert
                   type="info"
                   showIcon
-                  message="视频已完成,正在等待后端返回可访问 URL"
-                  description="页面不会直接请求上游私有下载地址,请稍后刷新任务。"
+                  message={intl.formatMessage({ id: 'playground.video.waitingBackendUrl' })}
+                  description={intl.formatMessage({ id: 'playground.video.waitingBackendUrlDesc' })}
                 />
               )}
 
@@ -930,9 +948,11 @@ export default function VideoPanel() {
                 <Alert
                   type="error"
                   showIcon
-                  message={task.error?.message || '生成失败'}
+                  message={task.error?.message || intl.formatMessage({ id: 'playground.video.generateFailed' })}
                   description={
-                    task.error?.code ? `错误码: ${task.error.code}` : undefined
+                    task.error?.code
+                      ? intl.formatMessage({ id: 'playground.video.errorCode' }, { code: task.error.code })
+                      : undefined
                   }
                 />
               )}
@@ -942,7 +962,7 @@ export default function VideoPanel() {
                 <Alert
                   type="warning"
                   showIcon
-                  message="任务已取消"
+                  message={intl.formatMessage({ id: 'playground.video.taskCanceled' })}
                 />
               )}
 
@@ -973,8 +993,11 @@ export default function VideoPanel() {
           color: '#666',
         }}
       >
-        💡 异步任务接口:提交后立即返回 <code>task_id</code>,页面在后台每 5 秒轮询一次。
-        离开页面不会丢 — 回到这里会继续从 localStorage 恢复上次的任务并接着轮询。
+        💡{' '}
+        {intl.formatMessage(
+          { id: 'playground.video.footerHint' },
+          { taskId: <code key="t">task_id</code> },
+        )}
       </div>
 
       <MediaHistoryDrawer
