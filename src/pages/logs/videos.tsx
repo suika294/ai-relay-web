@@ -1,6 +1,8 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Alert, Button, Tag, Typography } from 'antd';
 import { DownloadOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { useIntl } from '@umijs/max';
+import { t } from '@/utils/i18n';
 import { userApi } from '@/services/api';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 
@@ -8,11 +10,11 @@ const { Text, Link } = Typography;
 
 // 状态 → 文案 + Tag 颜色。对齐 VideoPanel 的显示习惯。
 const statusMeta: Record<string, { text: string; color: string }> = {
-  queued: { text: '排队', color: 'default' },
-  running: { text: '生成中', color: 'processing' },
-  succeeded: { text: '完成', color: 'success' },
-  failed: { text: '失败', color: 'error' },
-  canceled: { text: '已取消', color: 'warning' },
+  queued: { text: t('logs.videos.statusQueued'), color: 'default' },
+  running: { text: t('logs.videos.statusRunning'), color: 'processing' },
+  succeeded: { text: t('logs.videos.statusSucceeded'), color: 'success' },
+  failed: { text: t('logs.videos.statusFailed'), color: 'error' },
+  canceled: { text: t('logs.videos.statusCanceled'), color: 'warning' },
 };
 
 function durationText(t: API.MediaTask): string {
@@ -22,12 +24,13 @@ function durationText(t: API.MediaTask): string {
 }
 
 export default function VideoHistory() {
+  const intl = useIntl();
   return (
     <PageContainer
-      title="视频生成历史"
+      title={intl.formatMessage({ id: 'logs.videos.title' })}
       content={
         <Text type="secondary">
-          调用 /v1/videos/generations 产生的任务历史。行展开可在线预览视频与下载。
+          {intl.formatMessage({ id: 'logs.videos.desc' })}
         </Text>
       }
     >
@@ -49,7 +52,7 @@ export default function VideoHistory() {
         }}
         columns={[
           {
-            title: '时间',
+            title: intl.formatMessage({ id: 'logs.videos.colTime' }),
             dataIndex: 'created_at',
             search: false,
             width: 170,
@@ -63,9 +66,9 @@ export default function VideoHistory() {
             copyable: true,
             render: (_, row) => <code style={{ fontSize: 12 }}>{row.id}</code>,
           },
-          { title: '模型', dataIndex: 'model' },
+          { title: intl.formatMessage({ id: 'logs.videos.colModel' }), dataIndex: 'model' },
           {
-            title: '状态',
+            title: intl.formatMessage({ id: 'logs.videos.colStatus' }),
             dataIndex: 'status',
             valueEnum: Object.fromEntries(
               Object.entries(statusMeta).map(([k, v]) => [k, { text: v.text }]),
@@ -76,13 +79,13 @@ export default function VideoHistory() {
             },
           },
           {
-            title: '用时',
+            title: intl.formatMessage({ id: 'logs.videos.colDuration' }),
             search: false,
             width: 90,
             render: (_, row) => durationText(row),
           },
           {
-            title: '产物',
+            title: intl.formatMessage({ id: 'logs.videos.colOutput' }),
             search: false,
             width: 120,
             render: (_, row) => {
@@ -90,7 +93,7 @@ export default function VideoHistory() {
               if (!url) return '—';
               return (
                 <Link href={url} target="_blank" rel="noreferrer">
-                  <PlayCircleOutlined /> 查看
+                  <PlayCircleOutlined /> {intl.formatMessage({ id: 'logs.videos.view' })}
                 </Link>
               );
             },
@@ -132,7 +135,7 @@ export default function VideoHistory() {
                           `video-${row.id}.mp4`,
                         )}
                       >
-                        下载
+                        {intl.formatMessage({ id: 'logs.videos.download' })}
                       </Button>
                     </div>
                   </div>
@@ -142,7 +145,14 @@ export default function VideoHistory() {
                     type="error"
                     showIcon
                     message={row.error.message}
-                    description={row.error.code ? `错误码: ${row.error.code}` : undefined}
+                    description={
+                      row.error.code
+                        ? intl.formatMessage(
+                            { id: 'logs.videos.errorCode' },
+                            { code: row.error.code },
+                          )
+                        : undefined
+                    }
                   />
                 )}
               </div>

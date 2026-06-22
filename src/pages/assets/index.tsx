@@ -7,6 +7,7 @@
 import { assetApi } from '@/services/api';
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
+import { useIntl } from '@umijs/max';
 import {
   Button,
   Image,
@@ -37,12 +38,13 @@ const moduleColors: Record<string, string> = {
 };
 
 export default function UserAssetsPage() {
+  const intl = useIntl();
   const tableRef = useRef<ActionType>();
 
   const previewAsset = async (id: number) => {
     const r = await assetApi.detail(id);
     if (r.code !== 0 || !r.data) {
-      message.error(r.message || '获取失败');
+      message.error(r.message || intl.formatMessage({ id: 'assets.fetchFailed' }));
       return;
     }
     const { url, asset } = r.data;
@@ -58,10 +60,10 @@ export default function UserAssetsPage() {
                 size="small"
                 onClick={() => {
                   navigator.clipboard.writeText(url);
-                  message.success('URL 已复制');
+                  message.success(intl.formatMessage({ id: 'assets.urlCopied' }));
                 }}
               >
-                复制 URL
+                {intl.formatMessage({ id: 'assets.copyUrl' })}
               </Button>
               <Button
                 size="small"
@@ -69,7 +71,7 @@ export default function UserAssetsPage() {
                 target="_blank"
                 style={{ marginLeft: 8 }}
               >
-                下载
+                {intl.formatMessage({ id: 'assets.download' })}
               </Button>
             </div>
           </div>
@@ -84,7 +86,7 @@ export default function UserAssetsPage() {
             <video src={url} controls style={{ width: '100%' }} />
             <div style={{ marginTop: 12 }}>
               <Button size="small" href={url} target="_blank">
-                下载
+                {intl.formatMessage({ id: 'assets.download' })}
               </Button>
             </div>
           </div>
@@ -101,15 +103,15 @@ export default function UserAssetsPage() {
       try {
         const r = await assetApi.upload(file as File);
         if (r.code === 0) {
-          message.success('上传成功');
+          message.success(intl.formatMessage({ id: 'assets.uploadSuccess' }));
           onSuccess?.(r);
           tableRef.current?.reload();
         } else {
-          message.error(r.message || '上传失败');
+          message.error(r.message || intl.formatMessage({ id: 'assets.uploadFailed' }));
           onError?.(new Error(r.message));
         }
       } catch (e: any) {
-        message.error(e?.message || '上传异常');
+        message.error(e?.message || intl.formatMessage({ id: 'assets.uploadError' }));
         onError?.(e);
       }
     },
@@ -118,28 +120,28 @@ export default function UserAssetsPage() {
   const columns: ProColumns<API.Asset>[] = [
     { title: 'ID', dataIndex: 'id', width: 80, hideInSearch: true },
     {
-      title: '类型',
+      title: intl.formatMessage({ id: 'assets.colType' }),
       dataIndex: 'module',
       width: 100,
       valueEnum: {
-        asset: { text: '通用' },
-        image: { text: '图片' },
-        video: { text: '视频' },
-        cover: { text: '封面' },
-        i2v_input: { text: 'i2v 输入' },
-        file: { text: '文件' },
+        asset: { text: intl.formatMessage({ id: 'assets.typeGeneral' }) },
+        image: { text: intl.formatMessage({ id: 'assets.typeImage' }) },
+        video: { text: intl.formatMessage({ id: 'assets.typeVideo' }) },
+        cover: { text: intl.formatMessage({ id: 'assets.typeCover' }) },
+        i2v_input: { text: intl.formatMessage({ id: 'assets.typeI2vInput' }) },
+        file: { text: intl.formatMessage({ id: 'assets.typeFile' }) },
       },
       render: (_, r) => <Tag color={moduleColors[r.module]}>{r.module}</Tag>,
     },
     {
-      title: '文件',
+      title: intl.formatMessage({ id: 'assets.colFile' }),
       dataIndex: 'filename',
       ellipsis: true,
       hideInSearch: true,
       render: (_, r) => r.filename || <span style={{ color: '#999' }}>{r.object_key}</span>,
     },
     {
-      title: '大小',
+      title: intl.formatMessage({ id: 'assets.colSize' }),
       dataIndex: 'size_bytes',
       width: 100,
       hideInSearch: true,
@@ -152,34 +154,34 @@ export default function UserAssetsPage() {
       hideInSearch: true,
     },
     {
-      title: '创建时间',
+      title: intl.formatMessage({ id: 'assets.colCreatedAt' }),
       dataIndex: 'created_at',
       width: 170,
       valueType: 'dateTime',
       hideInSearch: true,
     },
     {
-      title: '操作',
+      title: intl.formatMessage({ id: 'assets.colAction' }),
       width: 180,
       hideInSearch: true,
       fixed: 'right',
       render: (_, r) => (
         <Space size="small">
-          <a onClick={() => previewAsset(r.id)}>预览</a>
+          <a onClick={() => previewAsset(r.id)}>{intl.formatMessage({ id: 'assets.preview' })}</a>
           <Popconfirm
-            title="确认删除该素材?"
-            description="物理对象会异步删除"
+            title={intl.formatMessage({ id: 'assets.deleteConfirmTitle' })}
+            description={intl.formatMessage({ id: 'assets.deleteConfirmDesc' })}
             onConfirm={async () => {
               const res = await assetApi.remove(r.id);
               if (res.code === 0) {
-                message.success('已删除');
+                message.success(intl.formatMessage({ id: 'assets.deleted' }));
                 tableRef.current?.reload();
               } else {
-                message.error(res.message || '删除失败');
+                message.error(res.message || intl.formatMessage({ id: 'assets.deleteFailed' }));
               }
             }}
           >
-            <a style={{ color: '#cf1322' }}>删除</a>
+            <a style={{ color: '#cf1322' }}>{intl.formatMessage({ id: 'assets.delete' })}</a>
           </Popconfirm>
         </Space>
       ),
@@ -189,8 +191,8 @@ export default function UserAssetsPage() {
   return (
     <PageContainer
       header={{
-        title: '我的素材',
-        subTitle: '上传 / 管理你的图片、视频和文件',
+        title: intl.formatMessage({ id: 'assets.title' }),
+        subTitle: intl.formatMessage({ id: 'assets.subTitle' }),
       }}
     >
       <ProTable<API.Asset>
@@ -200,7 +202,7 @@ export default function UserAssetsPage() {
         scroll={{ x: 900 }}
         toolBarRender={() => [
           <Upload key="upload" {...uploadProps}>
-            <Button type="primary">上传素材</Button>
+            <Button type="primary">{intl.formatMessage({ id: 'assets.uploadBtn' })}</Button>
           </Upload>,
         ]}
         request={async (params) => {

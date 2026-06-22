@@ -29,8 +29,8 @@ export default defineConfig({
     // ========= 公开页（不走 ProLayout） =========
     { path: '/', component: './home', layout: false },
     { path: '/landing-classic', component: './landing', layout: false },
-    { path: '/models', component: './pricing', layout: false },
-    { path: '/pricing', component: './pricing', layout: false },
+    { path: '/models', component: './model-market', layout: false },
+    { path: '/pricing', component: './model-market', layout: false },
     { path: '/pricing-classic', component: './pricing', layout: false },
     // 文档:多路由 + 侧边栏。父级 DocsLayout 用 <Outlet/> 渲染子页内容,
     // 各子页就是普通 React 组件,只关心自身的正文。
@@ -48,6 +48,9 @@ export default defineConfig({
         { path: '/docs/models', component: './docs/models' },
         { path: '/docs/images', component: './docs/images' },
         { path: '/docs/videos', component: './docs/videos' },
+        { path: '/docs/templates', component: './docs/templates' },
+        { path: '/docs/3d', component: './docs/3d' },
+        { path: '/docs/digital-human', component: './docs/digital-human' },
         { path: '/docs/audio', component: './docs/audio' },
         { path: '/docs/embeddings', component: './docs/embeddings' },
         { path: '/docs/vectordb', component: './docs/vectordb' },
@@ -59,6 +62,7 @@ export default defineConfig({
     { path: '/billing', component: './billing/public-recharge', layout: false },
     { path: '/auth/login', component: './auth/login', layout: false },
     { path: '/auth/register', component: './auth/register', layout: false },
+    { path: '/auth/forgot-password', component: './auth/forgot-password', layout: false },
 
     // ========= 控制台（默认 ProLayout + 登录保护） =========
     { path: '/console', redirect: '/console/dashboard' },
@@ -74,6 +78,13 @@ export default defineConfig({
       path: '/console/tokens',
       component: './tokens',
       icon: 'KeyOutlined',
+      wrappers: ['@/wrappers/auth'],
+    },
+    {
+      name: 'Key 分组',
+      path: '/console/token-groups',
+      component: './token-groups',
+      icon: 'AppstoreOutlined',
       wrappers: ['@/wrappers/auth'],
     },
     // 日志:侧边栏只剩"使用日志"一项,直接提到一级,不再套父菜单。
@@ -112,6 +123,13 @@ export default defineConfig({
       path: '/console/billing/records',
       component: './billing/records',
       icon: 'FileTextOutlined',
+      wrappers: ['@/wrappers/auth'],
+    },
+    {
+      name: '发票',
+      path: '/console/billing/invoices',
+      component: './billing/invoices',
+      icon: 'FileDoneOutlined',
       wrappers: ['@/wrappers/auth'],
     },
     {

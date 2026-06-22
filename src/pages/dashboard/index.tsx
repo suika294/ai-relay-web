@@ -3,11 +3,13 @@ import { PageContainer, ProCard, StatisticCard } from '@ant-design/pro-component
 import { Area, Pie } from '@ant-design/charts';
 import { Alert, Button, Col, Row, Space, Tag, Typography } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useIntl } from '@umijs/max';
 import { userApi } from '@/services/api';
 
 const { Paragraph } = Typography;
 
 export default function Dashboard() {
+  const intl = useIntl();
   const [balance, setBalance] = useState<API.Balance | null>(null);
   const [balLoading, setBalLoading] = useState(false);
   const [balError, setBalError] = useState<string | null>(null);
@@ -68,7 +70,7 @@ export default function Dashboard() {
     cost: Number(p.usd_cost),
   }));
   const modelData = (stats?.by_model ?? []).map((m: API.GroupItem) => ({
-    type: m.key || '(未知)',
+    type: m.key || intl.formatMessage({ id: 'dashboard.unknownModel' }),
     value: Number(m.requests),
   }));
 
@@ -77,7 +79,7 @@ export default function Dashboard() {
 
   return (
     <PageContainer
-      title="总览"
+      title={intl.formatMessage({ id: 'dashboard.title' })}
       extra={
         <Space>
           <Button
@@ -85,7 +87,7 @@ export default function Dashboard() {
             loading={balLoading || statsLoading}
             onClick={() => load(true)}
           >
-            刷新
+            {intl.formatMessage({ id: 'dashboard.refresh' })}
           </Button>
         </Space>
       }
@@ -95,10 +97,13 @@ export default function Dashboard() {
           type="error"
           showIcon
           style={{ marginBottom: 16 }}
-          message={`加载失败：${balError || statsError}`}
+          message={intl.formatMessage(
+            { id: 'dashboard.loadFailed' },
+            { error: balError || statsError },
+          )}
           action={
             <Button size="small" onClick={() => load(true)}>
-              重试
+              {intl.formatMessage({ id: 'dashboard.retry' })}
             </Button>
           }
         />
@@ -108,23 +113,32 @@ export default function Dashboard() {
         <StatisticCard
           colSpan={{ xs: 24, md: 12 }}
           statistic={{
-            title: `余额（${displayCurrency}）`,
+            title: intl.formatMessage(
+              { id: 'dashboard.balanceTitle' },
+              { currency: displayCurrency },
+            ),
             value: hasBalance ? balance!.display_amount : '—',
             suffix: hasBalance ? displayCurrency : '',
             description: hasBalance ? (
               <span style={{ fontSize: 12, color: '#999' }}>
-                = {balance!.balance_quota.toLocaleString()} quota（内部单位）
+                = {balance!.balance_quota.toLocaleString()}{' '}
+                {intl.formatMessage({ id: 'dashboard.quotaInternalUnit' })}
                 {balance!.display_currency !== 'USD' && <> · ≈ ${balance!.usd_amount}</>}
               </span>
             ) : (
-              <span style={{ fontSize: 12, color: '#c00' }}>未获取到余额，请刷新或检查网络</span>
+              <span style={{ fontSize: 12, color: '#c00' }}>
+                {intl.formatMessage({ id: 'dashboard.balanceEmpty' })}
+              </span>
             ),
           }}
         />
         <StatisticCard
           colSpan={{ xs: 24, md: 12 }}
           statistic={{
-            title: `当前汇率（USD → ${displayCurrency}）`,
+            title: intl.formatMessage(
+              { id: 'dashboard.exchangeRateTitle' },
+              { currency: displayCurrency },
+            ),
             value: balance?.exchange_rate ?? '—',
             description: (
               <span style={{ fontSize: 12, color: '#999' }}>
@@ -139,11 +153,17 @@ export default function Dashboard() {
         <StatisticCard
           colSpan={{ xs: 24, md: 8 }}
           statistic={{
-            title: '今日请求',
+            title: intl.formatMessage({ id: 'dashboard.todayRequests' }),
             value: stats?.today.requests ?? 0,
             description: (
               <span style={{ fontSize: 12, color: '#999' }}>
-                成功 {stats?.today.success ?? 0} · 失败 {stats?.today.failure ?? 0}
+                {intl.formatMessage(
+                  { id: 'dashboard.successFailure' },
+                  {
+                    success: stats?.today.success ?? 0,
+                    failure: stats?.today.failure ?? 0,
+                  },
+                )}
               </span>
             ),
           }}
@@ -151,7 +171,7 @@ export default function Dashboard() {
         <StatisticCard
           colSpan={{ xs: 24, md: 8 }}
           statistic={{
-            title: '今日消耗 tokens',
+            title: intl.formatMessage({ id: 'dashboard.todayTokens' }),
             value: stats?.today.total_tokens ?? 0,
             description: (
               <span style={{ fontSize: 12, color: '#999' }}>
@@ -163,11 +183,14 @@ export default function Dashboard() {
         <StatisticCard
           colSpan={{ xs: 24, md: 8 }}
           statistic={{
-            title: '本月累计消耗',
+            title: intl.formatMessage({ id: 'dashboard.monthTotal' }),
             value: `$${stats?.month.usd_cost ?? 0}`,
             description: (
               <span style={{ fontSize: 12, color: '#999' }}>
-                tokens {stats?.month.total_tokens ?? 0}
+                {intl.formatMessage(
+                  { id: 'dashboard.tokensCount' },
+                  { tokens: stats?.month.total_tokens ?? 0 },
+                )}
               </span>
             ),
           }}
@@ -176,7 +199,11 @@ export default function Dashboard() {
 
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col xs={24} md={16}>
-          <ProCard title="近 30 天消耗趋势" loading={statsLoading && !stats} bodyStyle={{ padding: 8 }}>
+          <ProCard
+            title={intl.formatMessage({ id: 'dashboard.trendTitle' })}
+            loading={statsLoading && !stats}
+            bodyStyle={{ padding: 8 }}
+          >
             {trendData.length > 0 ? (
               <Area
                 autoFit
@@ -188,12 +215,20 @@ export default function Dashboard() {
                 style={{ fill: 'linear-gradient(-90deg, white 0%, #5b9dff 100%)' }}
               />
             ) : (
-              <Alert type="info" showIcon message="还没有使用数据；去 Playground 试试看" />
+              <Alert
+                type="info"
+                showIcon
+                message={intl.formatMessage({ id: 'dashboard.noUsageData' })}
+              />
             )}
           </ProCard>
         </Col>
         <Col xs={24} md={8}>
-          <ProCard title="模型分布（近 30 天）" loading={statsLoading && !stats} bodyStyle={{ padding: 8 }}>
+          <ProCard
+            title={intl.formatMessage({ id: 'dashboard.modelDistribution' })}
+            loading={statsLoading && !stats}
+            bodyStyle={{ padding: 8 }}
+          >
             {modelData.length > 0 ? (
               <Pie
                 autoFit
@@ -207,17 +242,21 @@ export default function Dashboard() {
                 label={{ text: 'type', position: 'outside' }}
               />
             ) : (
-              <div style={{ padding: 20, color: '#999', textAlign: 'center' }}>暂无数据</div>
+              <div style={{ padding: 20, color: '#999', textAlign: 'center' }}>
+                {intl.formatMessage({ id: 'common.noData' })}
+              </div>
             )}
           </ProCard>
         </Col>
       </Row>
 
-      <ProCard title="使用说明" style={{ marginTop: 16 }}>
+      <ProCard title={intl.formatMessage({ id: 'dashboard.usageGuide' })} style={{ marginTop: 16 }}>
         <Alert
           message={
             <>
-              前往 <a href="/console/tokens">API Key</a> 页面创建一个 Token（sk-...），然后像调用 OpenAI 一样调用本服务
+              {intl.formatMessage({ id: 'dashboard.guideBefore' })}{' '}
+              <a href="/console/tokens">API Key</a>{' '}
+              {intl.formatMessage({ id: 'dashboard.guideAfter' })}
             </>
           }
           type="info"
@@ -231,11 +270,13 @@ export default function Dashboard() {
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}'`}
         </Paragraph>
         <div>
-          可用模型：<Tag>gpt-4o-mini</Tag>
+          {intl.formatMessage({ id: 'dashboard.availableModels' })}
+          <Tag>gpt-4o-mini</Tag>
           <Tag>deepseek-chat</Tag>
           <Tag>glm-4-flash</Tag>
           <Tag>moonshot-v1-8k</Tag>
-          ... 更多见 <a href="/pricing">定价页</a>
+          {intl.formatMessage({ id: 'dashboard.moreSee' })}{' '}
+          <a href="/models">{intl.formatMessage({ id: 'dashboard.modelMarket' })}</a>
         </div>
       </ProCard>
     </PageContainer>

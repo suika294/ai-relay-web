@@ -9,7 +9,7 @@ import {
   ThunderboltOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
-import { history, useModel } from '@umijs/max';
+import { history, useIntl, useModel } from '@umijs/max';
 import { Button, Empty, Input, Spin, Tag, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuthModal } from '@/components/AuthModalProvider';
@@ -32,8 +32,8 @@ const providerLabel: Record<string, string> = {
   'glm-code': 'GLM Code',
   zai: 'Z.AI',
   qwen: 'Qwen',
-  dashscope: '阿里通义千问',
-  xiaomi: '小米 MiMo',
+  dashscope: 'Alibaba Tongyi Qianwen',
+  xiaomi: 'Xiaomi MiMo',
   grok: 'Grok',
   doubao: 'Doubao',
   kling: 'Kling',
@@ -42,19 +42,19 @@ const providerLabel: Record<string, string> = {
   custom: 'Custom',
 };
 
-const typeMeta: Record<string, { label: string; icon: React.ReactNode; tone: string }> = {
-  chat: { label: '对话大模型', icon: <FileTextOutlined />, tone: 'blue' },
-  image: { label: '文生图', icon: <PictureOutlined />, tone: 'indigo' },
-  video: { label: 'AI 视频', icon: <VideoCameraOutlined />, tone: 'amber' },
-  audio: { label: '语音合成', icon: <AudioOutlined />, tone: 'green' },
-  embedding: { label: '向量模型', icon: <BookOutlined />, tone: 'purple' },
-  rerank: { label: '重排序', icon: <ThunderboltOutlined />, tone: 'orange' },
+const typeMeta: Record<string, { labelKey: string; icon: React.ReactNode; tone: string }> = {
+  chat: { labelKey: 'pricing.typeChat', icon: <FileTextOutlined />, tone: 'blue' },
+  image: { labelKey: 'pricing.typeImage', icon: <PictureOutlined />, tone: 'indigo' },
+  video: { labelKey: 'pricing.typeVideo', icon: <VideoCameraOutlined />, tone: 'amber' },
+  audio: { labelKey: 'pricing.typeAudio', icon: <AudioOutlined />, tone: 'green' },
+  embedding: { labelKey: 'pricing.typeEmbedding', icon: <BookOutlined />, tone: 'purple' },
+  rerank: { labelKey: 'pricing.typeRerank', icon: <ThunderboltOutlined />, tone: 'orange' },
 };
 
-const featuredTags: Record<string, { label: string; tone: string }> = {
-  recommended: { label: '热门', tone: 'red' },
-  new: { label: '高速', tone: 'emerald' },
-  free: { label: '免费', tone: 'green' },
+const featuredTags: Record<string, { labelKey: string; tone: string }> = {
+  recommended: { labelKey: 'pricing.tagRecommended', tone: 'red' },
+  new: { labelKey: 'pricing.tagFast', tone: 'emerald' },
+  free: { labelKey: 'pricing.tagFree', tone: 'green' },
 };
 
 const fmtCtx = (n?: number) => {
@@ -88,6 +88,7 @@ export default function Pricing() {
 }
 
 function PricingContent() {
+  const intl = useIntl();
   const { initialState } = useModel('@@initialState');
   const { openAuthModal } = useAuthModal();
   const [list, setList] = useState<API.PublicModel[]>([]);
@@ -145,9 +146,9 @@ function PricingContent() {
   const copyModelName = async (name: string) => {
     try {
       await navigator.clipboard.writeText(name);
-      message.success(`已复制:${name}`);
+      message.success(intl.formatMessage({ id: 'pricing.copied' }, { name }));
     } catch {
-      message.error('复制失败,请手动复制');
+      message.error(intl.formatMessage({ id: 'pricing.copyFailed' }));
     }
   };
 
@@ -156,7 +157,7 @@ function PricingContent() {
     if (!preset) return null;
     return (
       <span key={tag} className={`market-tag market-tag--${preset.tone}`}>
-        {preset.label}
+        {intl.formatMessage({ id: preset.labelKey })}
       </span>
     );
   };
@@ -164,10 +165,8 @@ function PricingContent() {
   return (
     <div className="model-market-page">
       <header className="market-hero">
-        <Title level={1}>模型广场</Title>
-        <Paragraph>
-          发现并无缝集成顶尖 AI 模型，连接您的工作流。
-        </Paragraph>
+        <Title level={1}>{intl.formatMessage({ id: 'pricing.title' })}</Title>
+        <Paragraph>{intl.formatMessage({ id: 'pricing.subtitle' })}</Paragraph>
       </header>
 
       <section className="market-filter-panel">
@@ -176,7 +175,7 @@ function PricingContent() {
           size="large"
           allowClear
           prefix={<SearchOutlined />}
-          placeholder="搜索模型 (例如 GPT-4, Claude)..."
+          placeholder={intl.formatMessage({ id: 'pricing.searchPlaceholder' })}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
@@ -187,7 +186,7 @@ function PricingContent() {
             onClick={() => setTypeFilter('__all__')}
             type="button"
           >
-            全部模型
+            {intl.formatMessage({ id: 'pricing.allModels' })}
           </button>
           {typeOptions.map((type) => (
             <button
@@ -196,13 +195,13 @@ function PricingContent() {
               onClick={() => setTypeFilter(type)}
               type="button"
             >
-              {typeMeta[type]?.label ?? type}
+              {typeMeta[type] ? intl.formatMessage({ id: typeMeta[type].labelKey }) : type}
             </button>
           ))}
         </div>
 
         <button className="market-sort-button" type="button">
-          排序方式
+          {intl.formatMessage({ id: 'pricing.sortBy' })}
           <DownOutlined />
         </button>
       </section>
@@ -212,10 +211,13 @@ function PricingContent() {
           <section className="market-grid">
             {visibleModels.map((m) => {
               const meta = typeMeta[m.type] ?? {
-                label: m.type || '模型',
+                labelKey: '',
                 icon: <ThunderboltOutlined />,
                 tone: 'gray',
               };
+              const metaLabel = meta.labelKey
+                ? intl.formatMessage({ id: meta.labelKey })
+                : m.type || intl.formatMessage({ id: 'pricing.modelFallback' });
               const provider = providerLabel[m.provider_type] ?? m.provider_type;
               return (
                 <article className="market-card" key={m.id}>
@@ -237,7 +239,7 @@ function PricingContent() {
                     <button
                       className="market-bookmark"
                       type="button"
-                      aria-label="收藏模型"
+                      aria-label={intl.formatMessage({ id: 'pricing.bookmarkAria' })}
                     >
                       <StarOutlined />
                     </button>
@@ -246,21 +248,21 @@ function PricingContent() {
                   <div className="market-tags">
                     {(m.tags ?? []).map(renderTag)}
                     <span className={`market-tag market-tag--${meta.tone}`}>
-                      {meta.label}
+                      {metaLabel}
                     </span>
                   </div>
 
                   <p className="market-card-desc">
-                    {provider} 模型，支持通过 OpenAI 兼容接口接入，适用于生产工作流与快速原型验证。
+                    {intl.formatMessage({ id: 'pricing.cardDesc' }, { provider })}
                   </p>
 
                   <div className="market-metrics">
                     <div>
-                      <span>最大上下文</span>
+                      <span>{intl.formatMessage({ id: 'pricing.maxContext' })}</span>
                       <strong>{fmtCtx(m.max_tokens)}</strong>
                     </div>
                     <div>
-                      <span>计费单价 (百万输入/输出)</span>
+                      <span>{intl.formatMessage({ id: 'pricing.priceLabel' })}</span>
                       <strong>
                         {fmtMoney(m.input_price)} / {fmtMoney(m.output_price)}
                       </strong>
@@ -269,10 +271,10 @@ function PricingContent() {
 
                   <div className="market-card-actions">
                     <Button type="primary" onClick={handleUse}>
-                      立即使用
+                      {intl.formatMessage({ id: 'pricing.useNow' })}
                     </Button>
                     <Button onClick={() => copyModelName(m.name)}>
-                      详情
+                      {intl.formatMessage({ id: 'pricing.details' })}
                     </Button>
                   </div>
                 </article>
@@ -282,7 +284,11 @@ function PricingContent() {
         ) : (
           <Empty
             className="market-empty"
-            description={loading ? '正在加载模型...' : '暂无匹配模型'}
+            description={
+              loading
+                ? intl.formatMessage({ id: 'pricing.loadingModels' })
+                : intl.formatMessage({ id: 'pricing.noMatch' })
+            }
           />
         )}
       </Spin>
@@ -293,7 +299,7 @@ function PricingContent() {
             size="large"
             onClick={() => setVisibleCount((n) => n + 9)}
           >
-            加载更多模型
+            {intl.formatMessage({ id: 'pricing.loadMore' })}
           </Button>
         </div>
       )}

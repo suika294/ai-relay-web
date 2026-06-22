@@ -1,202 +1,337 @@
-import {
-  ThunderboltOutlined,
-  PictureOutlined,
-  AudioOutlined,
-  NumberOutlined,
-  FileTextOutlined,
-  VideoCameraOutlined,
-  SearchOutlined,
-} from '@ant-design/icons';
-import {
-  ModalForm,
-  ProFormDatePicker,
-  ProFormDigit,
-  ProFormSelect,
-  ProFormSwitch,
-  ProFormText,
-} from '@ant-design/pro-components';
-import { history, useModel } from '@umijs/max';
+import { history, useIntl, useModel } from '@umijs/max';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
-import {
-  Button,
-  Carousel,
-  Col,
-  Input,
-  Modal,
-  Pagination,
-  Row,
-  Space,
-  Tag,
-  Tooltip,
-  Typography,
-  message,
-} from 'antd';
-import dayjs from 'dayjs';
-import { useEffect, useMemo, useState } from 'react';
-import AuthModal from '@/components/AuthModal';
+import { Button, Carousel, Col, Grid, Row, Typography } from 'antd';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useAuthModal } from '@/components/AuthModalProvider';
 import PublicLayout from '@/layouts/PublicLayout';
-import { bannerApi, systemApi, tokenApi } from '@/services/api';
+import { bannerApi, showcaseApi, systemApi } from '@/services/api';
+import { publicMediaURL } from '@/utils/media';
 import HeroCarousel from './HeroCarousel';
+import {
+  ProviderLogo,
+  featuredPrice,
+  fmtCtx,
+  providerLabel,
+  typeLabel,
+  useQuickKey,
+} from '../model-market/_shared';
 
-const { Paragraph } = Typography;
+// 文案均存 i18n key,渲染时用 intl.formatMessage 解析,以便随语言切换重渲。
+const generationShowcases = [
+  {
+    key: 'video',
+    tab: 'home.index.tabVideo',
+    title: 'home.index.videoTitle',
+    description: 'home.index.videoDesc',
+    docsHref: '/docs/videos',
+    playgroundHref: '/console/playground?tab=video',
+    modelHref: '/models?type=video',
+    stats: [
+      'home.index.videoStat1',
+      'home.index.videoStat2',
+      'home.index.videoStat3',
+    ],
+    actions: [
+      { key: 'basic', label: 'home.index.videoActionBasic' },
+      { key: 'keyframe', label: 'home.index.videoActionKeyframe' },
+      { key: 'multiref', label: 'home.index.videoActionMultiref' },
+      { key: 'refvideo', label: 'home.index.videoActionRefvideo' },
+    ],
+    visualTitle: 'home.index.videoVisualTitle',
+    visualSubtitle: 'submit → queued → running → succeeded',
+    preview: ['Prompt', 'Frames', 'Task ID', 'Video URL'],
+  },
+  {
+    key: 'image',
+    tab: 'home.index.tabImage',
+    title: 'home.index.imageTitle',
+    description: 'home.index.imageDesc',
+    docsHref: '/docs/images',
+    playgroundHref: '/console/playground?tab=image',
+    modelHref: '/models?type=image',
+    stats: [
+      'home.index.imageStat1',
+      'home.index.imageStat2',
+      'home.index.imageStat3',
+    ],
+    actions: [
+      { key: 't2i', label: 'home.index.imageActionT2i' },
+      { key: 'i2i', label: 'home.index.imageActionI2i' },
+      { key: 'ratio', label: 'home.index.imageActionRatio' },
+    ],
+    visualTitle: 'home.index.imageVisualTitle',
+    visualSubtitle: 'home.index.imageVisualSubtitle',
+    preview: ['Model', 'Prompt', 'Size', 'Images'],
+  },
+  {
+    key: 'media',
+    tab: 'home.index.tabMedia',
+    title: 'home.index.mediaTitle',
+    description: 'home.index.mediaDesc',
+    docsHref: '/docs/audio',
+    playgroundHref: '/console/playground?tab=audio',
+    modelHref: '/models?type=audio',
+    stats: [
+      'ASR / TTS',
+      'home.index.mediaStat2',
+      'home.index.mediaStat3',
+    ],
+    actions: [
+      { key: 'audio', label: 'home.index.mediaActionAudio' },
+      { key: 'threed', label: 'home.index.mediaActionThreed' },
+      { key: 'voiceclone', label: 'home.index.mediaActionVoiceclone' },
+      { key: 'avatar', label: 'home.index.mediaActionAvatar' },
+    ],
+    visualTitle: 'home.index.mediaVisualTitle',
+    visualSubtitle: 'home.index.mediaVisualSubtitle',
+    preview: ['Audio', 'Clone', '3D', 'Avatar'],
+  },
+] as const;
 
-const providerLabel: Record<string, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  gemini: 'Google Gemini',
-  google: 'Google',
-  azure: 'Azure OpenAI',
-  kimi: 'Kimi (Moonshot)',
-  'kimi-code': 'Kimi Code',
-  moonshot: 'Moonshot AI',
-  deepseek: 'DeepSeek',
-  glm: 'GLM (Zhipu)',
-  'glm-code': 'GLM Code',
-  zai: 'Z.AI',
-  qwen: 'Qwen',
-  dashscope: '阿里通义千问',
-  xiaomi: '小米 MiMo',
-  grok: 'Grok',
-  doubao: 'Doubao',
-  kling: 'Kling',
-  vidu: 'Vidu',
-  llama: 'Llama',
-  custom: '自定义',
-};
-
-const typeLabel: Record<string, { text: string; icon: React.ReactNode }> = {
-  chat: { text: '对话', icon: <FileTextOutlined /> },
-  image: { text: '文生图', icon: <PictureOutlined /> },
-  video: { text: '视频生成', icon: <VideoCameraOutlined /> },
-  embedding: { text: '向量', icon: <NumberOutlined /> },
-  audio: { text: '音频', icon: <AudioOutlined /> },
-  rerank: { text: '重排序', icon: <ThunderboltOutlined /> },
-};
-
-// 厂商官方 logo:走 lobehub 的纯静态 SVG 包,通过 unpkg CDN 直接 <img> 引用,
-// 不引入 npm 依赖,避开了之前 @lobehub/icons React 组件包对 React 19 `use`
-// export 的依赖(在 React 18 项目里会导致生产构建失败)。
-// 没有官方 logo 的 provider(xiaomi/custom 等)走下方 providerInitialColor 兜底。
-const providerIconSlug: Record<string, string> = {
-  openai: 'openai',
-  anthropic: 'claude-color',
-  gemini: 'gemini-color',
-  google: 'google-color',
-  azure: 'azure-color',
-  deepseek: 'deepseek-color',
-  glm: 'chatglm-color',
-  'glm-code': 'chatglm-color',
-  zai: 'chatglm-color',
-  qwen: 'qwen-color',
-  dashscope: 'qwen-color',
-  grok: 'grok',
-  doubao: 'doubao-color',
-  kling: 'kling-color',
-  llama: 'metaai-color',
-};
-
-// lobehub 没有官方 logo,或者官方 logo 是白色填充 (在白底 chip 上不可见,
-// 比如 kimi-color) 的厂商,放在 /public/providers/ 下做品牌色 SVG 兜底。
-const providerLocalIcon: Record<string, string> = {
-  vidu: '/providers/vidu.svg',
-  xiaomi: '/providers/xiaomi.svg',
-  kimi: '/providers/kimi.svg',
-  'kimi-code': '/providers/kimi.svg',
-  moonshot: '/providers/kimi.svg',
-};
-
-const LOBEHUB_ICON_BASE =
-  'https://unpkg.com/@lobehub/icons-static-svg@1/icons';
-
-// 厂商首字母彩色圆,作为 logo 加载失败 / 没有官方 logo 时的兜底。
-const providerInitialColor = (p: string) => {
-  const palette = [
-    '#4F46E5',
-    '#0EA5E9',
-    '#10B981',
-    '#F59E0B',
-    '#EF4444',
-    '#8B5CF6',
-    '#EC4899',
-    '#06B6D4',
-    '#F97316',
-  ];
-  let h = 0;
-  for (let i = 0; i < p.length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0;
-  return palette[h % palette.length];
-};
-
-const ProviderLogo: React.FC<{ provider: string; size: number }> = ({
-  provider,
-  size,
-}) => {
-  const slug = providerIconSlug[provider];
-  const localIcon = providerLocalIcon[provider];
-  const [broken, setBroken] = useState(false);
-  const src = !broken && slug
-    ? `${LOBEHUB_ICON_BASE}/${slug}.svg`
-    : localIcon;
-  if (src) {
-    return (
-      <img
-        className="provider-logo-img"
-        src={src}
-        alt={provider}
-        style={{ width: size, height: size }}
-        onError={() => setBroken(true)}
-      />
-    );
-  }
+// 声波样式音频播放器 —— 替代原生 <audio controls>,在成品/参考里更好看:
+// 播放按钮 + 一排声波条(播放时跳动) + 时长。深色玻璃药丸,深浅底上都协调。
+const WAVE_BAR_HEIGHTS = [9, 15, 22, 13, 26, 17, 11, 24, 19, 14, 21, 10];
+function WaveAudio({ src, label }: { src?: string; label?: string }) {
+  const intl = useIntl();
+  const ref = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [dur, setDur] = useState(0);
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  };
   return (
-    <span
-      className="provider-logo-fallback"
-      style={{
-        width: size,
-        height: size,
-        background: providerInitialColor(provider),
-        fontSize: Math.max(10, Math.round(size * 0.45)),
-      }}
-    >
-      {(provider || '?').slice(0, 1).toUpperCase()}
-    </span>
+    <div className={'wave-audio' + (playing ? ' is-playing' : '')}>
+      <button
+        type="button"
+        className="wave-audio-btn"
+        onClick={toggle}
+        aria-label={
+          playing
+            ? intl.formatMessage({ id: 'home.index.pause' })
+            : intl.formatMessage({ id: 'home.index.play' })
+        }
+      >
+        {playing ? '❚❚' : '▶'}
+      </button>
+      <div className="wave-audio-bars" aria-hidden="true">
+        {WAVE_BAR_HEIGHTS.concat(WAVE_BAR_HEIGHTS).map((h, i) => (
+          <i
+            key={i}
+            style={{ height: `${h}px`, animationDelay: `${(i % 7) * 0.09}s` }}
+          />
+        ))}
+      </div>
+      <span className="wave-audio-label">
+        {dur ? `${Math.round(dur)}"` : ''}
+        {label
+          ? ` ${label}`
+          : !dur
+          ? intl.formatMessage({ id: 'home.index.audio' })
+          : ''}
+      </span>
+      <audio
+        ref={ref}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
+      />
+    </div>
   );
-};
+}
 
-// 把 max_tokens 数字格式化为 "128K" / "1M" 之类
-const fmtCtx = (n?: number) => {
-  if (!n || n <= 0) return '—';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return `${n}`;
-};
-
-// 把价格字符串简化:去掉多余 0
-const fmtPrice = (s: string) => {
-  const n = Number(s);
-  if (!isFinite(n)) return `$${s}`;
-  if (n === 0) return '$0';
-  if (n < 0.01) return `$${n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}`;
-  return `$${n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
-};
+// 数智人视频卡:静音循环自动播放,右上角声音开关(各卡独立,点了才出声)。
+function MediaVideoCard({
+  src,
+  poster,
+  children,
+}: {
+  src?: string;
+  poster?: string;
+  children?: ReactNode;
+}) {
+  const intl = useIntl();
+  const ref = useRef<HTMLVideoElement>(null);
+  const [muted, setMuted] = useState(true);
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    const next = !muted;
+    setMuted(next);
+    el.muted = next;
+    if (!next) el.play().catch(() => {});
+  };
+  return (
+    <div className="generation-demo-card-media">
+      <video
+        ref={ref}
+        src={src}
+        poster={poster}
+        muted={muted}
+        loop
+        playsInline
+        autoPlay
+        preload="metadata"
+      />
+      <button
+        type="button"
+        className="generation-demo-sound-btn"
+        onClick={toggle}
+        aria-label={
+          muted
+            ? intl.formatMessage({ id: 'home.index.unmute' })
+            : intl.formatMessage({ id: 'home.index.mute' })
+        }
+        title={
+          muted
+            ? intl.formatMessage({ id: 'home.index.unmute' })
+            : intl.formatMessage({ id: 'home.index.mute' })
+        }
+      >
+        {muted ? '🔇' : '🔊'}
+      </button>
+      {children}
+    </div>
+  );
+}
 
 export default function Home() {
+  // useAuthModal 依赖 AuthModalProvider,而 Provider 由 PublicLayout 在 children 外层提供。
+  // 所以调用 useAuthModal 的逻辑必须放在 PublicLayout 的子组件里(跟 landing 一致),
+  // 不能直接写在渲染 <PublicLayout> 的 Home 函数体内 —— 否则 Home 在 Provider 之上,
+  // useAuthModal 拿不到 context 会抛 "must be used within AuthModalProvider"。
+  return (
+    <PublicLayout hideFooter>
+      <HomeContent />
+    </PublicLayout>
+  );
+}
+
+function HomeContent() {
+  const intl = useIntl();
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
   const site = useSiteInfo();
+  const { openAuthModal } = useAuthModal();
+  const { handleGenerate, modals } = useQuickKey();
 
   const [list, setList] = useState<API.PublicModel[]>([]);
   const [banners, setBanners] = useState<API.Banner[]>([]);
+  const [showcases, setShowcases] = useState<API.Showcase[]>([]);
   const [loading, setLoading] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<string>('__all__');
-  const [providerFilter, setProviderFilter] = useState<string>('__all__');
-  const [keyword, setKeyword] = useState<string>('');
-  const [page, setPage] = useState(1);
-  // 2 列 × 2 行 = 4,加上 hero + 过滤栏 + 分页条刚好一屏内,不必滚太多
-  const [pageSize, setPageSize] = useState(4);
-  const [pickedModel, setPickedModel] = useState<API.PublicModel | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [authOpen, setAuthOpen] = useState(false);
-  const [authTab, setAuthTab] = useState<'login' | 'register'>('login');
+  const [activeShowcaseKey, setActiveShowcaseKey] =
+    useState<(typeof generationShowcases)[number]['key']>('video');
+  // 视频面板当前选中项(多条素材时由缩略图切换)
+  const [activeVideoId, setActiveVideoId] = useState<number | null>(null);
+  // 当前选中的功能(对应左侧功能小按钮);null = 未筛选,展示该 tab 全部
+  const [activeFeature, setActiveFeature] = useState<string | null>(null);
+  const screens = Grid.useBreakpoint();
+  // 右侧成果展示面板 —— 功能小按钮点击后平滑滚动/聚焦到这里
+  const demoRef = useRef<HTMLDivElement>(null);
+  const scrollToDemo = () =>
+    demoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  // 产品功能区:桌面端「卡在一屏 + 滚轮切 tab」(对标苹果产品页,但不撑高页面)。
+  // 板块本身就一屏高;占据视口中心时接管滚轮。关键:面板内容(如图像瀑布)比一屏高时,
+  // 先在板块内把内容滚到尽头(演示完),再往同方向滚才切下一个 tab;切到首/末项后再滚就放行。
+  const showcaseRef = useRef<HTMLElement>(null);
+  const lastShowcaseKeyRef =
+    useRef<(typeof generationShowcases)[number]['key']>('video');
+  // 切换面板后,把新面板内容滚到该方向的起点(向下进入→顶部,向上进入→底部)
+  const pendingPanelScrollRef = useRef<'top' | 'bottom' | null>(null);
+  // 切换方向:1=前进(新卡片从下往上覆盖),-1=后退(从上往下覆盖),驱动覆盖动画
+  const slideDirRef = useRef(1);
+  useEffect(() => {
+    const sc = showcaseRef.current?.querySelector<HTMLElement>(
+      '.generation-showcase-sticky',
+    );
+    if (!sc || !pendingPanelScrollRef.current) return;
+    sc.scrollTop = pendingPanelScrollRef.current === 'bottom' ? sc.scrollHeight : 0;
+    pendingPanelScrollRef.current = null;
+  }, [activeShowcaseKey]);
+
+  useEffect(() => {
+    const el = showcaseRef.current;
+    if (!el) return;
+    const mq = window.matchMedia('(min-width: 901px)');
+    const n = generationShowcases.length;
+    let engaged = false; // 板块当前是否已“接管”(占据视口中心)
+    let cooldown = false; // 一次手势只切一格,期间吞掉多余滚轮
+    const arm = () => {
+      cooldown = true;
+      window.setTimeout(() => {
+        cooldown = false;
+      }, 600);
+    };
+    // from: 切到新面板后内容停靠的位置;同面板时直接就地归位
+    const setIdx = (idx: number, from: 'top' | 'bottom') => {
+      const key = generationShowcases[idx].key;
+      if (key === lastShowcaseKeyRef.current) {
+        const sc = el.querySelector<HTMLElement>('.generation-showcase-sticky');
+        if (sc) sc.scrollTop = from === 'bottom' ? sc.scrollHeight : 0;
+        return;
+      }
+      pendingPanelScrollRef.current = from;
+      slideDirRef.current = from === 'top' ? 1 : -1;
+      lastShowcaseKeyRef.current = key;
+      setActiveShowcaseKey(key);
+      setActiveFeature(null);
+      setActiveVideoId(null);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (!mq.matches) return;
+      const rect = el.getBoundingClientRect();
+      const vh = window.innerHeight;
+      // 板块中心进入视口才算“主导”——此时才接管滚轮
+      const dominant = rect.top < vh * 0.5 && rect.bottom > vh * 0.5;
+      if (!dominant) {
+        engaged = false;
+        return;
+      }
+      const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      if (!dir) return;
+      const sc = el.querySelector<HTMLElement>('.generation-showcase-sticky');
+
+      // 刚进入板块:吸附对齐到一屏,并按进入方向把焦点放到首/末项
+      if (!engaged) {
+        engaged = true;
+        e.preventDefault();
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setIdx(dir > 0 ? 0 : n - 1, dir > 0 ? 'top' : 'bottom');
+        arm();
+        return;
+      }
+
+      // 先让当前面板内容在该方向上滚动(瀑布流等);没到尽头就交给原生滚动,不切 tab
+      if (sc) {
+        const canDown = sc.scrollTop + sc.clientHeight < sc.scrollHeight - 2;
+        const canUp = sc.scrollTop > 2;
+        if (dir > 0 && canDown) return;
+        if (dir < 0 && canUp) return;
+      }
+
+      const curIdx = generationShowcases.findIndex(
+        (s) => s.key === lastShowcaseKeyRef.current,
+      );
+      const nextIdx = curIdx + dir;
+      // 已到该方向的边界:放行页面滚动,正常滚出板块
+      if (nextIdx < 0 || nextIdx >= n) return;
+
+      // 内容已演示完,切下一个 tab
+      e.preventDefault();
+      if (cooldown) return;
+      arm();
+      setIdx(nextIdx, dir > 0 ? 'top' : 'bottom');
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -211,55 +346,102 @@ export default function Home() {
         if (res.code === 0) setBanners((res.data as API.Banner[]) || []);
       })
       .catch(() => {});
+    // showcases 失败不阻塞 —— 拉不到则各 tab 回退到抽象占位图(优雅降级)
+    showcaseApi
+      .list()
+      .then((res) => {
+        if (res.code === 0) setShowcases((res.data as API.Showcase[]) || []);
+      })
+      .catch(() => {});
   }, []);
 
-  const { types, providers } = useMemo(() => {
-    const t = new Set<string>();
-    const p = new Set<string>();
-    for (const m of list) {
-      if (m.type) t.add(m.type);
-      if (m.provider_type) p.add(m.provider_type);
-    }
-    return {
-      types: Array.from(t),
-      providers: Array.from(p),
-    };
-  }, [list]);
-
-  const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    return list.filter((m) => {
-      if (typeFilter !== '__all__' && m.type !== typeFilter) return false;
-      if (providerFilter !== '__all__' && m.provider_type !== providerFilter)
-        return false;
-      if (kw) {
-        const hay = `${m.name ?? ''} ${m.display_name ?? ''} ${
-          providerLabel[m.provider_type] ?? m.provider_type ?? ''
-        }`.toLowerCase();
-        if (!hay.includes(kw)) return false;
-      }
-      return true;
-    });
-  }, [list, typeFilter, providerFilter, keyword]);
-
-  // 筛选/搜索变化时回到第 1 页,避免停留在已经不存在的页码上
-  useEffect(() => {
-    setPage(1);
-  }, [typeFilter, providerFilter, keyword]);
-
-  const paged = useMemo(
-    () => filtered.slice((page - 1) * pageSize, page * pageSize),
-    [filtered, page, pageSize],
+  // 当前 tab 下的素材:按 category 归属(后端已按 sort_order DESC, id DESC 排好)。
+  const tabItems = useMemo(
+    () =>
+      showcases.filter(
+        (s) => s.category === activeShowcaseKey && publicMediaURL(s.media_url),
+      ),
+    [showcases, activeShowcaseKey],
   );
+  // 选了功能则只展示绑定该功能的素材;该功能还没素材时回退展示该 tab 全部。
+  // 再按 media_type 决定怎么渲染(视频播放器 / 图片画廊 / 音频播放器)。
+  const activeItems = useMemo(() => {
+    if (!activeFeature) return tabItems;
+    const matched = tabItems.filter((s) => s.feature === activeFeature);
+    return matched.length ? matched : tabItems;
+  }, [tabItems, activeFeature]);
+  const activeVideos = useMemo(
+    () => activeItems.filter((s) => s.media_type === 'video'),
+    [activeItems],
+  );
+  const activeImages = useMemo(
+    () => activeItems.filter((s) => s.media_type === 'image'),
+    [activeItems],
+  );
+  const activeAudios = useMemo(
+    () => activeItems.filter((s) => s.media_type === 'audio'),
+    [activeItems],
+  );
+
+  // 当前要播放的视频:优先选中项,否则第一条
+  const activeVideo = useMemo(
+    () => activeVideos.find((s) => s.id === activeVideoId) ?? activeVideos[0] ?? null,
+    [activeVideos, activeVideoId],
+  );
+
+  // 竖版视频(如数智人 9:16)在 16:9 容器里用 cover 会被裁掉头尾,
+  // 元数据加载后检测宽高比,竖版改用 contain 完整显示(两侧留深色边)
+  const [isPortraitVideo, setIsPortraitVideo] = useState(false);
+  useEffect(() => {
+    setIsPortraitVideo(false);
+  }, [activeVideo?.id]);
+
+  // 视频默认不自动播放,只有滚动进入视口才播放、滚出则暂停(IntersectionObserver)。
+  // 声音默认静音(无声自动播放才被浏览器允许),用户可点按钮切换。
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoMuted, setVideoMuted] = useState(true);
+  // 切换视频时回到静音,避免上一条开了声音、下一条直接外放
+  useEffect(() => {
+    setVideoMuted(true);
+  }, [activeVideo?.id]);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          el.play().catch(() => {});
+        } else {
+          el.pause();
+        }
+      },
+      // 露出约一半再播,滚出即停
+      { threshold: 0.5 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [activeVideo?.id]);
+  const toggleVideoSound = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    const next = !videoMuted;
+    setVideoMuted(next);
+    // React 对 video.muted 的 prop 同步不可靠,这里命令式兜底
+    el.muted = next;
+    // 取消静音通常发生在用户手势内,顺手确保在播放
+    if (!next) el.play().catch(() => {});
+  };
 
   // 推荐模型:优先取带 `recommended` 标签的;若没有则降级取带 `new` 标签;
   // 都没有时直接取列表前几个(后端通常按 sort 字段排过序了)。
-  // 超过 4 个会自动切到 Carousel(每屏 4 张),上限 12(3 屏),避免 dots 过多。
+  // 超过 perSlide 张就切到 Carousel,上限 12(对应桌面 3 屏 / 移动 12 屏)。
   const RECOMMENDED_MAX = 12;
-  const RECOMMENDED_PER_SLIDE = 4;
+  // md+(≥768)保持 4 张/屏 跟 Col 网格对齐;sm(576-768)2 张/屏;xs(<576)1 张/屏
+  const RECOMMENDED_PER_SLIDE = screens.md ? 4 : screens.sm ? 2 : 1;
   const recommended = useMemo(() => {
     const tagged = list.filter((m) => m.tags?.includes('recommended'));
-    if (tagged.length >= RECOMMENDED_MAX) return tagged.slice(0, RECOMMENDED_MAX);
+    if (tagged.length >= RECOMMENDED_MAX)
+      return tagged.slice(0, RECOMMENDED_MAX);
     const news = list.filter((m) => m.tags?.includes('new'));
     const merged = [...tagged];
     for (const m of news) {
@@ -276,92 +458,25 @@ export default function Home() {
     return merged.slice(0, RECOMMENDED_MAX);
   }, [list]);
 
-  // 把 recommended 按每屏 4 个切片,供 Carousel 使用
+  // 把 recommended 按每屏 perSlide 个切片,供 Carousel 使用 —— perSlide 跟着断点变化,要进 deps
   const recommendedSlides = useMemo(() => {
     const slides: API.PublicModel[][] = [];
     for (let i = 0; i < recommended.length; i += RECOMMENDED_PER_SLIDE) {
       slides.push(recommended.slice(i, i + RECOMMENDED_PER_SLIDE));
     }
     return slides;
-  }, [recommended]);
+  }, [recommended, RECOMMENDED_PER_SLIDE]);
 
-  // quickCreateKey —— "极简生成 Key" 流程:不再弹表单让用户填名字/有效期/额度,
-  // 直接用模型名做 Key 名、不限额度、无有效期,拿到 key 后弹结果框让用户复制。
-  //
-  // 仍然保留了下方的详细 ModalForm 代码(formOpen 状态 + JSX),主要是为了:
-  //   - 产品后续如果想把"有效期 / 额度"再加回来,不用从 git 历史里翻
-  //   - 控制台 /console/tokens 页面的创建逻辑独立,那边是完整表单,不受此改动影响
-  // 当前没有入口触发 formOpen=true,详细表单实际不会显示。
-  const quickCreateKey = async (row: API.PublicModel) => {
-    const hide = message.loading('正在生成 Key...', 0);
-    try {
-      const res = await tokenApi.create({
-        name: row.display_name || row.name,
-        allowed_models: [row.name],
-        unlimited_quota: true,
-        // 不传 expires_at → 永久有效;不传 quota_limit → 由 unlimited_quota 覆盖
-      });
-      hide();
-      if (res.code === 0 && res.data) {
-        Modal.success({
-          title: 'Key 创建成功',
-          width: 560,
-          content: (
-            <div>
-              <div style={{ marginBottom: 10, color: '#555' }}>
-                已为模型{' '}
-                <Tooltip title="点击复制模型 ID">
-                  <Tag
-                    color="blue"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => copyId(row.name)}
-                  >
-                    {row.name}
-                  </Tag>
-                </Tooltip>{' '}
-                生成一个不限额度、永久有效的 Key:
-              </div>
-              <Paragraph copyable code style={{ marginBottom: 8 }}>
-                {res.data.key}
-              </Paragraph>
-              <div style={{ color: '#888', fontSize: 12 }}>
-                请妥善保存,关闭后将不会再完整显示。可在控制台「API Key」页调整
-                允许的模型范围、设置有效期或消耗上限。
-              </div>
-            </div>
-          ),
-        });
-      } else {
-        message.error((res as any)?.message || '创建失败');
-      }
-    } catch (e: any) {
-      hide();
-      message.error(e?.message || '创建失败');
-    }
-  };
-
-  const handleGenerate = (row: API.PublicModel) => {
-    // 未登录:先记住选中的模型,登录/注册成功后在 AuthModal.onSuccess 里继续走 quickCreateKey
-    setPickedModel(row);
-    if (!user) {
-      setAuthTab('login');
-      setAuthOpen(true);
-      return;
-    }
-    quickCreateKey(row);
-  };
-
-  const copyId = async (name: string) => {
-    try {
-      await navigator.clipboard.writeText(name);
-      message.success(`已复制:${name}`);
-    } catch {
-      message.error('复制失败,请手动选中');
-    }
-  };
+  const activeShowcase = useMemo(
+    () =>
+      generationShowcases.find((item) => item.key === activeShowcaseKey) ??
+      generationShowcases[0],
+    [activeShowcaseKey],
+  );
 
   const renderFeaturedCard = (m: API.PublicModel) => {
     const t = typeLabel[m.type];
+    const price = featuredPrice(m);
     return (
       <Col key={m.id} xs={24} sm={12} md={12} lg={6}>
         <div className="featured-card" onClick={() => handleGenerate(m)}>
@@ -384,15 +499,18 @@ export default function Home() {
             <span>
               {t?.icon} {t?.text ?? m.type}
             </span>
-            <span>{fmtCtx(m.max_tokens)} 上下文</span>
+            <span>
+              {fmtCtx(m.max_tokens)}{' '}
+              {intl.formatMessage({ id: 'home.index.context' })}
+            </span>
           </div>
           <div className="featured-card-foot">
             <span className="featured-price">
-              {fmtPrice(m.input_price)}
-              <em> / M in</em>
+              {price.text}
+              <em>{price.unit}</em>
             </span>
             <Button type="primary" size="small">
-              生成 Key
+              {intl.formatMessage({ id: 'home.index.generateKey' })}
             </Button>
           </div>
         </div>
@@ -400,49 +518,94 @@ export default function Home() {
     );
   };
 
-  const renderFilter = (
-    label: string,
-    current: string,
-    setter: (v: string) => void,
-    options: { value: string; label: string; icon?: React.ReactNode }[],
-  ) => (
-    <div className="model-filter-row">
-      <span className="model-filter-label">{label}</span>
-      <div className="model-filter-chips">
-        <Tag.CheckableTag
-          className="model-chip"
-          checked={current === '__all__'}
-          onChange={() => setter('__all__')}
-        >
-          全部
-        </Tag.CheckableTag>
-        {options.map((opt) => (
-          <Tag.CheckableTag
-            key={opt.value}
-            className="model-chip"
-            checked={current === opt.value}
-            onChange={() => setter(opt.value)}
-          >
-            {opt.icon ? (
-              <span className="model-chip-inner">
-                <span className="model-chip-icon">{opt.icon}</span>
-                {opt.label}
-              </span>
-            ) : (
-              opt.label
-            )}
-          </Tag.CheckableTag>
-        ))}
-      </div>
+  // Prompt 做成「输入框」样子(对标 Vidu):闪光图标 + 提示词 + 「创作」按钮(点了跳 Playground),
+  // 让人一眼看出这是生成用的提示词。
+  const renderPromptBox = (prompt: string) => (
+    <div className="generation-demo-promptbox">
+      <span className="generation-demo-promptbox-icon" aria-hidden="true">
+        ✦
+      </span>
+      <span className="generation-demo-promptbox-text" title={prompt}>
+        {prompt}
+      </span>
+      <button
+        type="button"
+        className="generation-demo-promptbox-go"
+        onClick={(e) => {
+          e.stopPropagation();
+          history.push(activeShowcase.playgroundHref);
+        }}
+      >
+        {intl.formatMessage({ id: 'home.index.create' })}
+      </button>
     </div>
   );
 
+  // 成品底部「参考图(+ 连接) + Prompt 文案」信息条 —— 默认隐藏,鼠标悬停成品时淡入(CSS 控制)。
+  // includePrompt:视频走影院模式(原 prompt 已隐藏)由这里带 Prompt;图片有 figcaption 带文案,故只放参考图。
+  const renderRefBar = (item: API.Showcase, includePrompt: boolean) => {
+    const refs = item.ref_images ?? [];
+    const showPrompt = includePrompt && !!item.subtitle;
+    if (refs.length === 0 && !showPrompt) return null;
+    return (
+      <div className="generation-demo-refbar">
+        {refs.length > 0 && (
+          <div className="generation-demo-refbar-items">
+            {refs.map((r, i) => (
+              <span className="generation-demo-refbar-item" key={`${r.url}-${i}`}>
+                {r.kind === 'audio' ? (
+                  <WaveAudio src={publicMediaURL(r.url)} />
+                ) : (
+                  <img src={publicMediaURL(r.url)} alt="" loading="lazy" />
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+        {showPrompt && renderPromptBox(item.subtitle)}
+      </div>
+    );
+  };
+
+  // 数智人/音频/3D tab:每个实例一张卡(视频卡 / 音频卡 / 图片卡),按 media_type 渲染。
+  // 悬停卡片时底部浮出该实例的参考图 + Prompt(renderRefBar)。
+  const renderMediaCard = (s: API.Showcase) => (
+    <figure className="generation-demo-card" key={s.id}>
+      {s.media_type === 'video' ? (
+        <MediaVideoCard
+          src={publicMediaURL(s.media_url)}
+          poster={publicMediaURL(s.poster_url)}
+        >
+          {renderRefBar(s, true)}
+        </MediaVideoCard>
+      ) : (
+        <div className="generation-demo-card-media">
+          {s.media_type === 'audio' ? (
+            <div className="generation-demo-card-audio">
+              <WaveAudio src={publicMediaURL(s.media_url)} />
+            </div>
+          ) : (
+            <img src={publicMediaURL(s.media_url)} alt={s.title || ''} loading="lazy" />
+          )}
+          {renderRefBar(s, true)}
+        </div>
+      )}
+      {(s.title || s.model_name) && (
+        <figcaption className="generation-demo-card-cap">
+          {s.title && <strong>{s.title}</strong>}
+          {s.model_name && <em>{s.model_name}</em>}
+        </figcaption>
+      )}
+    </figure>
+  );
+
   return (
-    <PublicLayout>
+    <>
       {/* Hero —— 有 banner 时整块铺满背景轮播;无 banner 时退回纯文案居中。 */}
       <section
         className={
-          'hero home-hero' + (banners.length > 0 ? ' home-hero--with-banner' : '')
+          'hero home-hero' +
+          (banners.length > 0 ? ' home-hero--with-banner' : '')
         }
       >
         {banners.length > 0 && <HeroCarousel banners={banners} />}
@@ -454,67 +617,89 @@ export default function Home() {
         >
           <div className="hero-left">
             <h1 className="hero-title">
-              一次接入,<br />
-              <span className="hero-highlight">所有主流 AI 模型</span>
+              {intl.formatMessage({ id: 'home.index.heroTitleLine1' })}
+              <br />
+              <span className="hero-highlight">
+                {intl.formatMessage({ id: 'home.index.heroTitleLine2' })}
+              </span>
             </h1>
             <p className="hero-sub">
-              {site.name} 提供 OpenAI 兼容的统一 API,聚合 OpenAI / Anthropic / Gemini /
-              国内厂商等模型;支持多币种计费、流式转发、细粒度成本控制。
+              {intl.formatMessage(
+                { id: 'home.index.heroSub' },
+                { name: site.name },
+              )}
             </p>
-            {!user && (
-              <div className="hero-cta">
-                {site.register_enabled && (
+            <div className="hero-cta">
+              <Button
+                type="primary"
+                size="large"
+                onClick={() => history.push('/models')}
+              >
+                {intl.formatMessage({ id: 'home.index.browseModels' })}
+              </Button>
+              {!user && (
+                <>
+                  {site.register_enabled && (
+                    <Button
+                      size="large"
+                      onClick={() =>
+                        openAuthModal({
+                          defaultTab: 'register',
+                          onSuccess: () => history.push('/console/dashboard'),
+                        })
+                      }
+                    >
+                      {intl.formatMessage({ id: 'home.index.register' })}
+                    </Button>
+                  )}
                   <Button
-                    type="primary"
                     size="large"
-                    onClick={() => {
-                      setPickedModel(null);
-                      setAuthTab('register');
-                      setAuthOpen(true);
-                    }}
+                    onClick={() =>
+                      openAuthModal({
+                        defaultTab: 'login',
+                        onSuccess: () => history.push('/console/dashboard'),
+                      })
+                    }
                   >
-                    注册
+                    {site.register_enabled
+                      ? intl.formatMessage({ id: 'home.index.loginWithAccount' })
+                      : intl.formatMessage({ id: 'home.index.login' })}
                   </Button>
-                )}
-                <Button
-                  size="large"
-                  type={site.register_enabled ? 'default' : 'primary'}
-                  onClick={() => {
-                    setPickedModel(null);
-                    setAuthTab('login');
-                    setAuthOpen(true);
-                  }}
-                >
-                  {site.register_enabled ? '已有账号，登录' : '登录'}
-                </Button>
-              </div>
-            )}
+                </>
+              )}
+            </div>
             <div className="hero-badges">
               <div>
-                <span className="b-num">20+</span>内置模型
+                <span className="b-num">20+</span>
+                {intl.formatMessage({ id: 'home.index.badgeModels' })}
               </div>
               <div>
-                <span className="b-num">7+</span>主流厂商
+                <span className="b-num">7+</span>
+                {intl.formatMessage({ id: 'home.index.badgeProviders' })}
               </div>
               <div>
-                <span className="b-num">5+</span>支持币种
+                <span className="b-num">5+</span>
+                {intl.formatMessage({ id: 'home.index.badgeCurrencies' })}
               </div>
               <div>
-                <span className="b-num">99.9%</span>可用性目标
+                <span className="b-num">99.9%</span>
+                {intl.formatMessage({ id: 'home.index.badgeUptime' })}
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* 推荐模型 —— 推荐/新标签优先,最多 12 张。超过 4 张自动切 Carousel,每屏 4 张 */}
+      {/* 推荐模型 —— banner 下方。推荐/新标签优先,最多 12 张。超过 4 张自动切 Carousel,每屏 4 张 */}
       {!loading && recommended.length > 0 && (
         <section className="featured-section">
           <div className="featured-head">
             <Typography.Title level={3} style={{ margin: 0 }}>
-              推荐模型
+              {intl.formatMessage({ id: 'home.index.recommendedTitle' })}
             </Typography.Title>
-            <span className="featured-sub">主流厂商旗舰,即点即用</span>
+            <span className="featured-sub">
+              {intl.formatMessage({ id: 'home.index.recommendedSub' })}
+            </span>
           </div>
           {recommendedSlides.length > 1 ? (
             <Carousel
@@ -542,283 +727,284 @@ export default function Home() {
         </section>
       )}
 
-      {/* 模型广场 + 选模型直出 Key */}
-      <section id="models" className="pricing-page model-market-section">
-        <span id="pricing" className="model-market-legacy-anchor" aria-hidden="true" />
-        <Typography.Title level={2} style={{ marginBottom: 8 }}>
-          模型广场
-        </Typography.Title>
-        <Paragraph type="secondary" style={{ fontSize: 15 }}>
-          发现并无缝集成顶尖 AI 模型。生成的 Key 默认只能调用当前所选模型,
-          登录后可到控制台追加其他模型、设置有效期与消耗上限。
-        </Paragraph>
-
-        {/* 过滤栏 */}
-        <div className="model-filter-bar">
-          <div className="model-filter-row">
-            <span className="model-filter-label">搜索</span>
-            <Input
-              allowClear
-              prefix={<SearchOutlined style={{ color: '#bbb' }} />}
-              placeholder="按模型名、显示名或厂商搜索,如 kimi、claude、gpt-4"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              style={{ maxWidth: 480 }}
-            />
+      <section className="generation-showcase-section" ref={showcaseRef}>
+        <div className="generation-showcase-sticky">
+        <div className="generation-showcase-inner">
+          <div className="generation-showcase-head">
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              {intl.formatMessage({ id: 'home.index.featuresTitle' })}
+            </Typography.Title>
+            <div className="generation-showcase-tabs" role="tablist">
+              {generationShowcases.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={
+                    'generation-showcase-tab' +
+                    (activeShowcase.key === item.key ? ' is-active' : '')
+                  }
+                  onClick={() => {
+                    setActiveShowcaseKey(item.key);
+                    setActiveFeature(null);
+                    setActiveVideoId(null);
+                  }}
+                >
+                  {intl.formatMessage({ id: item.tab })}
+                </button>
+              ))}
+            </div>
           </div>
-          {renderFilter(
-            '类型',
-            typeFilter,
-            setTypeFilter,
-            types.map((t) => ({
-              value: t,
-              label: typeLabel[t]?.text ?? t,
-              icon: typeLabel[t]?.icon,
-            })),
-          )}
-          {renderFilter(
-            '供应商',
-            providerFilter,
-            setProviderFilter,
-            providers.map((p) => ({
-              value: p,
-              label: providerLabel[p] ?? p,
-              icon: <ProviderLogo provider={p} size={14} />,
-            })),
-          )}
-        </div>
 
-        {/* 模型卡片网格 */}
-        {loading ? (
-          <div style={{ padding: 48, textAlign: 'center', color: '#999' }}>
-            加载中...
-          </div>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding: 48, textAlign: 'center', color: '#999' }}>
-            暂无匹配模型
-          </div>
-        ) : (
-          <Row gutter={[20, 20]} style={{ marginTop: 8 }}>
-            {paged.map((m) => {
-              const t = typeLabel[m.type];
-              return (
-                <Col key={m.id} xs={24} md={12} xl={12}>
-                  <div className="model-card">
-                    <div className="model-card-header">
-                      <div className="model-icon-wrap">
-                        <ProviderLogo provider={m.provider_type} size={28} />
-                      </div>
-                      <div className="model-card-title">
-                        <div className="model-card-name">
-                          {m.display_name || m.name}
-                          {m.tags?.includes('new') && (
-                            <Tag color="default" style={{ marginLeft: 8 }}>
-                              New
-                            </Tag>
-                          )}
-                          {m.tags?.includes('free') && (
-                            <Tag color="default" style={{ marginLeft: 4 }}>
-                              免费
-                            </Tag>
-                          )}
-                        </div>
-                        <div className="model-card-sub">{m.name}</div>
-                      </div>
-                    </div>
+          <div
+            key={activeShowcase.key}
+            className={
+              `generation-showcase-body generation-showcase-body--${activeShowcase.key}` +
+              // 仅视频走全屏影院式布局;数智人(media)改用卡片网格(见 --media 样式)
+              (activeShowcase.key === 'video' ? ' is-cinematic' : '') +
+              (slideDirRef.current < 0 ? ' is-back' : '')
+            }
+          >
+            <div className="generation-showcase-copy">
+              <h3>{intl.formatMessage({ id: activeShowcase.title })}</h3>
+              <p>{intl.formatMessage({ id: activeShowcase.description })}</p>
+              <div
+                className="generation-showcase-stats"
+                aria-label={intl.formatMessage({ id: 'home.index.statsLabel' })}
+              >
+                {activeShowcase.stats.map((item) => (
+                  <span key={item}>
+                    {item.startsWith('home.index.')
+                      ? intl.formatMessage({ id: item })
+                      : item}
+                  </span>
+                ))}
+              </div>
+              <div className="generation-showcase-actions">
+                {activeShowcase.actions.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    className={activeFeature === action.key ? 'is-active' : ''}
+                    onClick={() => {
+                      setActiveFeature(action.key);
+                      setActiveVideoId(null);
+                      scrollToDemo();
+                    }}
+                  >
+                    {intl.formatMessage({ id: action.label })}
+                  </button>
+                ))}
+              </div>
+              <div className="generation-showcase-cta-row">
+                <Button
+                  type="primary"
+                  onClick={() => history.push(activeShowcase.playgroundHref)}
+                >
+                  {intl.formatMessage({ id: 'home.index.gotoPlayground' })}
+                </Button>
+                <Button onClick={() => history.push(activeShowcase.docsHref)}>
+                  {intl.formatMessage({ id: 'home.index.viewDocs' })}
+                </Button>
+                <Button type="link" onClick={() => history.push(activeShowcase.modelHref)}>
+                  {intl.formatMessage({ id: 'home.index.filterModels' })}
+                </Button>
+              </div>
+            </div>
 
-                    <div className="model-card-metrics">
-                      <div className="metric">
-                        <div className="metric-k">输入</div>
-                        <div className="metric-v">
-                          {fmtPrice(m.input_price)}
-                          <span className="metric-unit"> / M Tokens</span>
-                        </div>
-                      </div>
-                      <div className="metric">
-                        <div className="metric-k">输出</div>
-                        <div className="metric-v">
-                          {fmtPrice(m.output_price)}
-                          <span className="metric-unit"> / M Tokens</span>
-                        </div>
-                      </div>
-                      <div className="metric">
-                        <div className="metric-k">上下文</div>
-                        <div className="metric-v">{fmtCtx(m.max_tokens)}</div>
-                      </div>
-                      <div className="metric">
-                        <div className="metric-k">类型</div>
-                        <div className="metric-v">
-                          <Space size={4}>
-                            {t?.icon}
-                            <span>{t?.text ?? m.type}</span>
-                          </Space>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="model-card-footer">
-                      <span className="model-card-provider">
-                        {providerLabel[m.provider_type] ?? m.provider_type}
-                      </span>
-                      <Button
-                        type="primary"
-                        onClick={() => handleGenerate(m)}
+            <div
+              className="generation-demo"
+              ref={demoRef}
+              aria-label={intl.formatMessage({ id: activeShowcase.title })}
+            >
+              <div className="generation-demo-panel">
+                {activeItems.length > 0 && activeShowcase.key === 'media' ? (
+                  // 数智人/音频/3D:混合且可能多实例 —— 每个实例一张卡,网格排列(1 个或 N 个都自然)
+                  <div className="generation-demo-grid">
+                    {activeItems.map((s) => renderMediaCard(s))}
+                  </div>
+                ) : activeItems.length > 0 ? (
+                  // 真实素材:按渲染方式拼装 —— 视频播放器 + 图片画廊 + 音频播放器
+                  <div
+                    className={`generation-demo-stage generation-demo-stage--${activeShowcase.key}`}
+                  >
+                    {activeVideo && (
+                      <div
+                        className={
+                          'generation-demo-video-wrap' +
+                          (isPortraitVideo ? ' is-portrait' : '')
+                        }
                       >
-                        生成 Key
+                        <video
+                          key={activeVideo.id}
+                          ref={videoRef}
+                          className="generation-demo-video"
+                          src={publicMediaURL(activeVideo.media_url)}
+                          poster={publicMediaURL(activeVideo.poster_url)}
+                          muted={videoMuted}
+                          loop
+                          playsInline
+                          preload="metadata"
+                          onLoadedMetadata={(e) =>
+                            setIsPortraitVideo(
+                              e.currentTarget.videoHeight >
+                                e.currentTarget.videoWidth,
+                            )
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="generation-demo-sound-btn"
+                          onClick={toggleVideoSound}
+                          aria-label={
+                            videoMuted
+                              ? intl.formatMessage({ id: 'home.index.unmute' })
+                              : intl.formatMessage({ id: 'home.index.mute' })
+                          }
+                          title={
+                            videoMuted
+                              ? intl.formatMessage({ id: 'home.index.unmute' })
+                              : intl.formatMessage({ id: 'home.index.mute' })
+                          }
+                        >
+                          {videoMuted ? '🔇' : '🔊'}
+                        </button>
+                        {activeVideo.model_name && (
+                          <span className="generation-demo-model-badge">
+                            {activeVideo.model_name}
+                          </span>
+                        )}
+                        {(activeVideo.title || activeVideo.subtitle) && (
+                          <div className="generation-demo-prompt">
+                            {activeVideo.title && <strong>{activeVideo.title}</strong>}
+                            {activeVideo.subtitle && <span>{activeVideo.subtitle}</span>}
+                          </div>
+                        )}
+                        {renderRefBar(activeVideo, true)}
+                      </div>
+                    )}
+                    {activeVideos.length > 1 && activeVideo && (
+                      <div className="generation-demo-thumbs">
+                        {activeVideos.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            className={
+                              'generation-demo-thumb' +
+                              (s.id === activeVideo.id ? ' is-active' : '')
+                            }
+                            onClick={() => setActiveVideoId(s.id)}
+                            aria-label={
+                              s.title ||
+                              s.subtitle ||
+                              intl.formatMessage({ id: 'home.index.videoAsset' })
+                            }
+                          >
+                            {s.poster_url ? (
+                              <img src={publicMediaURL(s.poster_url)} alt="" />
+                            ) : (
+                              <video
+                                src={publicMediaURL(s.media_url)}
+                                muted
+                                preload="metadata"
+                              />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {activeImages.length > 0 && (
+                      <div className="generation-demo-gallery">
+                        {activeImages.map((s) => (
+                          <figure key={s.id} className="generation-demo-tile">
+                            <img
+                              src={publicMediaURL(s.media_url)}
+                              alt={s.title || s.subtitle || ''}
+                              loading="lazy"
+                            />
+                            {(s.title || s.model_name) && (
+                              <figcaption>
+                                {s.title && <strong>{s.title}</strong>}
+                                {s.model_name && <em>{s.model_name}</em>}
+                              </figcaption>
+                            )}
+                            {s.subtitle && (
+                              <div className="generation-demo-tile-prompt">
+                                {renderPromptBox(s.subtitle)}
+                              </div>
+                            )}
+                          </figure>
+                        ))}
+                      </div>
+                    )}
+                    {activeAudios.length > 0 && (
+                      <div className="generation-demo-audio-list">
+                        {activeAudios.map((s) => (
+                          <div key={s.id} className="generation-demo-audio-item">
+                            <div className="generation-demo-audio-meta">
+                              {s.title && <strong>{s.title}</strong>}
+                              {s.model_name && <em>{s.model_name}</em>}
+                              {s.subtitle && <span>{s.subtitle}</span>}
+                            </div>
+                            <WaveAudio src={publicMediaURL(s.media_url)} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  // 兜底:无素材(或音频/3D tab)时保留原抽象占位图
+                  <>
+                    <div className="generation-demo-window">
+                      <div className="generation-demo-window-head">
+                        <span />
+                        <span />
+                        <span />
+                        <strong>{activeShowcase.title}</strong>
+                      </div>
+                      <div className="generation-demo-body">
+                        <div className="generation-demo-preview">
+                          <div className="generation-demo-orbit" />
+                          <div className="generation-demo-surface" />
+                          <div className="generation-demo-glow" />
+                        </div>
+                        <div className="generation-demo-fields">
+                          {activeShowcase.preview.map((item, idx) => (
+                            <div key={item} className="generation-demo-field">
+                              <span>{item}</span>
+                              <i style={{ width: `${88 - idx * 12}%` }} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="generation-demo-foot">
+                      <div>
+                        <strong>
+                          {intl.formatMessage({ id: activeShowcase.visualTitle })}
+                        </strong>
+                        <span>
+                          {activeShowcase.visualSubtitle.startsWith('home.index.')
+                            ? intl.formatMessage({
+                                id: activeShowcase.visualSubtitle,
+                              })
+                            : activeShowcase.visualSubtitle}
+                        </span>
+                      </div>
+                      <Button size="small" onClick={() => history.push(activeShowcase.docsHref)}>
+                        {intl.formatMessage({ id: 'home.index.docs' })}
                       </Button>
                     </div>
-                  </div>
-                </Col>
-              );
-            })}
-          </Row>
-        )}
-
-        {!loading && filtered.length > pageSize && (
-          <div
-            style={{
-              marginTop: 28,
-              display: 'flex',
-              justifyContent: 'center',
-            }}
-          >
-            <Pagination
-              current={page}
-              pageSize={pageSize}
-              total={filtered.length}
-              showSizeChanger
-              pageSizeOptions={[4, 8, 12, 24]}
-              showTotal={(total) => `共 ${total} 个模型`}
-              onChange={(p, s) => {
-                setPage(p);
-                if (s !== pageSize) setPageSize(s);
-              }}
-            />
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        )}
-
-        <Paragraph
-          type="secondary"
-          style={{ marginTop: 24, fontSize: 13 }}
-        >
-          * 实际扣费可能因渠道覆盖价或用户分组倍率而不同;注册登录后可在控制台查看你的实际倍率。
-        </Paragraph>
+        </div>
+        </div>
       </section>
 
-      {/* 生成 Key · 详细表单(保留版)
-          —— 目前首页的"生成 Key"按钮走的是 quickCreateKey 极简流程,不会把 formOpen
-             置 true,所以下面这段 ModalForm 是编译进来但不显示。
-          —— 若后续产品想把"名称/有效期/额度"再加回首页,删掉 quickCreateKey 的调用
-             改回 setFormOpen(true) 就能瞬间复用,不需要再重写字段和提交逻辑。 */}
-      <ModalForm
-        title={
-          pickedModel
-            ? `生成 Key · ${pickedModel.display_name || pickedModel.name}`
-            : '生成 Key'
-        }
-        open={formOpen}
-        width={520}
-        modalProps={{
-          destroyOnClose: true,
-          onCancel: () => setFormOpen(false),
-        }}
-        initialValues={{ unlimited_quota: false, quota_limit: 0 }}
-        onFinish={async (values: any) => {
-          if (!pickedModel) return false;
-          const res = await tokenApi.create({
-            name: values.name,
-            allowed_models: [pickedModel.name],
-            expires_at: values.expires_at
-              ? dayjs(values.expires_at).toISOString()
-              : undefined,
-            quota_limit: values.quota_limit ?? 0,
-            unlimited_quota: values.unlimited_quota ?? false,
-          });
-          if (res.code === 0 && res.data) {
-            setFormOpen(false);
-            Modal.success({
-              title: 'Key 创建成功',
-              width: 560,
-              content: (
-                <div>
-                  <div style={{ marginBottom: 8 }}>
-                    请妥善保存,关闭后将不会再完整显示:
-                  </div>
-                  <Paragraph copyable code>
-                    {res.data.key}
-                  </Paragraph>
-                  <div style={{ color: '#666', fontSize: 13, marginTop: 8 }}>
-                    此 Key 当前仅允许调用{' '}
-                    <Tooltip title="点击复制模型 ID">
-                      <Tag
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => copyId(pickedModel.name)}
-                      >
-                        {pickedModel.name}
-                      </Tag>
-                    </Tooltip>
-                    ,可在控制台"API Key"扩充模型范围。
-                  </div>
-                </div>
-              ),
-            });
-            return true;
-          }
-          message.error((res as any)?.message || '创建失败');
-          return false;
-        }}
-      >
-        <Space size={4} wrap style={{ marginBottom: 12 }}>
-          <span style={{ color: '#666' }}>将生成一个仅限调用以下模型的 Key:</span>
-          {pickedModel && (
-            <Tooltip title="点击复制模型 ID">
-              <Tag
-                color="blue"
-                style={{ cursor: 'pointer' }}
-                onClick={() => copyId(pickedModel.name)}
-              >
-                {pickedModel.name}
-              </Tag>
-            </Tooltip>
-          )}
-        </Space>
-        <ProFormText
-          name="name"
-          label="名称"
-          placeholder="例如:glm-prod / 测试用"
-          rules={[{ required: true }]}
-        />
-        <ProFormSelect
-          label="限制模型(已锁定)"
-          fieldProps={{
-            value: pickedModel ? [pickedModel.name] : [],
-            mode: 'multiple',
-            disabled: true,
-          }}
-        />
-        <ProFormDatePicker
-          name="expires_at"
-          label="有效期(可选)"
-          fieldProps={{ showTime: true, style: { width: '100%' } }}
-        />
-        <ProFormSwitch name="unlimited_quota" label="不限额度" />
-        <ProFormDigit name="quota_limit" label="Quota 上限(0 = 不限)" min={0} />
-      </ModalForm>
-
-      {/* 未登录用户点"生成 Key"时弹出,登录/注册成功后直接把之前选中的模型带入生成 Key 流程 */}
-      <AuthModal
-        open={authOpen}
-        defaultTab={authTab}
-        onClose={() => setAuthOpen(false)}
-        onSuccess={() => {
-          setAuthOpen(false);
-          if (pickedModel) {
-            quickCreateKey(pickedModel);
-          } else {
-            history.push('/console/dashboard');
-          }
-        }}
-      />
-    </PublicLayout>
+      {/* 选模型直出 Key 的弹窗(推荐模型卡片的"生成 Key"会用到) */}
+      {modals}
+    </>
   );
 }

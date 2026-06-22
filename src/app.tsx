@@ -1,6 +1,8 @@
 import type { RequestConfig } from '@umijs/max';
 import { message } from 'antd';
+import LangSwitch from '@/components/LangSwitch';
 import UserMenu from '@/components/UserMenu';
+import { t } from '@/utils/i18n';
 import { API_BASE_URL, apiURL } from '@/utils/request';
 
 // 站点信息的兜底默认值。后端 /system/info 不可达(网络抖动 / 启动早期)
@@ -104,7 +106,7 @@ export const request: RequestConfig = {
         data?.error?.message ||
         data?.message ||
         error?.message ||
-        '请求失败';
+        t('common.requestFailed');
       message.error(msg);
     },
   },
@@ -122,7 +124,7 @@ export const request: RequestConfig = {
       const data = response.data;
       if (data?.code && data.code !== 0) {
         if (data.code !== 40100 && data.code !== 40300) {
-          message.error(data.message || '业务错误');
+          message.error(data.message || t('common.bizError'));
         }
       }
       return response;
@@ -137,10 +139,11 @@ export const layout = ({ initialState }: any) => {
     // logo 后台没配时回落到内置 SVG,避免控制台顶栏空白。
     logo: site.logo || '/moqiao-logo-black.png',
     title: site.name,
-    menu: { locale: false },
-    // 顶栏右上角：头像名 + 下拉菜单（返回首页 / 个人设置 / 退出登录）
+    menu: { locale: true },
+    // 顶栏右上角：语言切换 + 头像名下拉菜单（返回首页 / 个人设置 / 退出登录）
+    actionsRender: () => [<LangSwitch key="lang" />],
     avatarProps: {
-      title: user?.display_name || user?.username || '未登录',
+      title: user?.display_name || user?.username || t('common.notLoggedIn'),
       size: 'small' as const,
       render: (_: any, dom: any) => <UserMenu>{dom}</UserMenu>,
     },

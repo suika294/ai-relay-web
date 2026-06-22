@@ -1,17 +1,19 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { DownloadOutlined } from '@ant-design/icons';
 import { Alert, Button, Image, Space, Tag, Typography } from 'antd';
+import { useIntl } from '@umijs/max';
 import { userApi } from '@/services/api';
+import { t } from '@/utils/i18n';
 import { browserDownloadName } from '@/utils/media';
 
 const { Text } = Typography;
 
 const statusMeta: Record<string, { text: string; color: string }> = {
-  queued: { text: '排队', color: 'default' },
-  running: { text: '生成中', color: 'processing' },
-  succeeded: { text: '完成', color: 'success' },
-  failed: { text: '失败', color: 'error' },
-  canceled: { text: '已取消', color: 'warning' },
+  queued: { text: t('logs.images.statusQueued'), color: 'default' },
+  running: { text: t('logs.images.statusRunning'), color: 'processing' },
+  succeeded: { text: t('logs.images.statusSucceeded'), color: 'success' },
+  failed: { text: t('logs.images.statusFailed'), color: 'error' },
+  canceled: { text: t('logs.images.statusCanceled'), color: 'warning' },
 };
 
 // 从 data[0] 里挖出可用于渲染 <img src> 的值。url / b64_json 两种模式并存。
@@ -24,12 +26,13 @@ function imageSrc(row: API.MediaTask): string | undefined {
 }
 
 export default function ImageHistory() {
+  const intl = useIntl();
   return (
     <PageContainer
-      title="图像生成历史"
+      title={intl.formatMessage({ id: 'logs.images.title' })}
       content={
         <Text type="secondary">
-          调用 /v1/images/generations 的产物记录。同步接口的历史由后端在响应成功后补写。
+          {intl.formatMessage({ id: 'logs.images.subtitle' })}
         </Text>
       }
     >
@@ -51,7 +54,7 @@ export default function ImageHistory() {
         }}
         columns={[
           {
-            title: '时间',
+            title: intl.formatMessage({ id: 'logs.images.colTime' }),
             dataIndex: 'created_at',
             search: false,
             width: 170,
@@ -59,7 +62,7 @@ export default function ImageHistory() {
               row.created_at ? new Date(row.created_at * 1000).toLocaleString() : '—',
           },
           {
-            title: '预览',
+            title: intl.formatMessage({ id: 'logs.images.colPreview' }),
             search: false,
             width: 96,
             render: (_, row) => {
@@ -83,9 +86,9 @@ export default function ImageHistory() {
             copyable: true,
             render: (_, row) => <code style={{ fontSize: 12 }}>{row.id}</code>,
           },
-          { title: '模型', dataIndex: 'model' },
+          { title: intl.formatMessage({ id: 'logs.images.colModel' }), dataIndex: 'model' },
           {
-            title: '状态',
+            title: intl.formatMessage({ id: 'logs.images.colStatus' }),
             dataIndex: 'status',
             valueEnum: Object.fromEntries(
               Object.entries(statusMeta).map(([k, v]) => [k, { text: v.text }]),
@@ -119,7 +122,7 @@ export default function ImageHistory() {
                         `image-${row.id}.png`,
                       )}
                     >
-                      下载
+                      {intl.formatMessage({ id: 'logs.images.downloadBtn' })}
                     </Button>
                   </Space>
                 )}
@@ -129,7 +132,14 @@ export default function ImageHistory() {
                     showIcon
                     style={{ marginTop: 10 }}
                     message={row.error.message}
-                    description={row.error.code ? `错误码: ${row.error.code}` : undefined}
+                    description={
+                      row.error.code
+                        ? intl.formatMessage(
+                            { id: 'logs.images.errorCode' },
+                            { code: row.error.code },
+                          )
+                        : undefined
+                    }
                   />
                 )}
               </div>

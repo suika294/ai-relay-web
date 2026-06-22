@@ -1,10 +1,12 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
+import { useIntl } from '@umijs/max';
 import { Tag } from 'antd';
 import { useState } from 'react';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { userApi } from '@/services/api';
 
 export default function Logs() {
+  const intl = useIntl();
   // summary 跟随 ProTable 每次 request 一起刷新。loading 用独立 state 而不是复用 ProTable 的,
   // 避免引入 actionRef + onLoad 把 request 拆成两半(与 admin UsageLogTable 同一做法)。
   const [summary, setSummary] = useState<API.UsageLogSummary | null>(null);
@@ -16,25 +18,30 @@ export default function Logs() {
       : '—';
   const stats: SummaryStat[] = [
     {
-      label: '请求数',
+      label: intl.formatMessage({ id: 'logs.index.statRequests' }),
       value: summary?.requests ?? 0,
-      hint: summary ? `成功 ${summary.success} · 失败 ${summary.failure}` : undefined,
+      hint: summary
+        ? intl.formatMessage(
+            { id: 'logs.index.statRequestsHint' },
+            { success: summary.success, failure: summary.failure },
+          )
+        : undefined,
     },
     {
-      label: '成功率',
+      label: intl.formatMessage({ id: 'logs.index.statSuccessRate' }),
       value: successRate,
       tone:
         summary && summary.requests > 0 && summary.failure / summary.requests > 0.1
           ? 'danger'
           : 'success',
     },
-    { label: '总 tokens', value: summary?.total_tokens ?? 0 },
-    { label: '平均耗时', value: summary ? `${summary.avg_latency_ms}ms` : '—' },
-    { label: 'USD', value: summary ? `$${summary.usd_cost}` : '—' },
+    { label: intl.formatMessage({ id: 'logs.index.statTotalTokens' }), value: summary?.total_tokens ?? 0 },
+    { label: intl.formatMessage({ id: 'logs.index.statAvgLatency' }), value: summary ? `${summary.avg_latency_ms}ms` : '—' },
+    { label: intl.formatMessage({ id: 'logs.index.statUsd' }), value: summary ? `$${summary.usd_cost}` : '—' },
   ];
 
   return (
-    <PageContainer title="使用日志">
+    <PageContainer title={intl.formatMessage({ id: 'logs.index.title' })}>
       <SummaryBar stats={stats} loading={summaryLoading && !summary} />
       <ProTable<API.UsageLog>
         rowKey="id"
@@ -61,35 +68,41 @@ export default function Logs() {
           };
         }}
         columns={[
-          { title: '时间', dataIndex: 'created_at', valueType: 'dateTime', search: false, width: 170 },
-          { title: '模型', dataIndex: 'model' },
-          { title: '渠道', dataIndex: 'channel_name', search: false },
-          { title: '输入', dataIndex: 'prompt_tokens', search: false },
-          { title: '输出', dataIndex: 'completion_tokens', search: false },
-          { title: '耗时(ms)', dataIndex: 'latency_ms', search: false },
+          { title: intl.formatMessage({ id: 'logs.index.colTime' }), dataIndex: 'created_at', valueType: 'dateTime', search: false, width: 170 },
+          {
+            title: intl.formatMessage({ id: 'logs.index.colTokenKey' }),
+            dataIndex: 'token_key',
+            search: false,
+            render: (_, row) => row.token_key || (row.token_id ? `#${row.token_id}` : '-'),
+          },
+          { title: intl.formatMessage({ id: 'logs.index.colModel' }), dataIndex: 'model' },
+          { title: intl.formatMessage({ id: 'logs.index.colChannel' }), dataIndex: 'channel_name', search: false },
+          { title: intl.formatMessage({ id: 'logs.index.colInput' }), dataIndex: 'prompt_tokens', search: false },
+          { title: intl.formatMessage({ id: 'logs.index.colOutput' }), dataIndex: 'completion_tokens', search: false },
+          { title: intl.formatMessage({ id: 'logs.index.colLatency' }), dataIndex: 'latency_ms', search: false },
           { title: 'Quota', dataIndex: 'quota_cost', search: false },
           {
-            title: '费用',
+            title: intl.formatMessage({ id: 'logs.index.colCost' }),
             search: false,
             render: (_, row) =>
               row.display_cost ? `${row.display_cost} ${row.display_currency}` : `$${row.usd_cost}`,
           },
           {
-            title: '流式',
+            title: intl.formatMessage({ id: 'logs.index.colStream' }),
             dataIndex: 'stream',
             search: false,
-            render: (v) => (v ? <Tag color="blue">SSE</Tag> : <Tag>一次</Tag>),
+            render: (v) => (v ? <Tag color="blue">SSE</Tag> : <Tag>{intl.formatMessage({ id: 'logs.index.streamOnce' })}</Tag>),
           },
           {
-            title: '状态',
+            title: intl.formatMessage({ id: 'logs.index.colStatus' }),
             dataIndex: 'status',
             valueEnum: {
-              1: { text: '成功', status: 'Success' },
-              0: { text: '失败', status: 'Error' },
+              1: { text: intl.formatMessage({ id: 'logs.index.statusSuccess' }), status: 'Success' },
+              0: { text: intl.formatMessage({ id: 'logs.index.statusFailure' }), status: 'Error' },
             },
           },
-          { title: '开始时间', dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
-          { title: '结束时间', dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
+          { title: intl.formatMessage({ id: 'logs.index.colSince' }), dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
+          { title: intl.formatMessage({ id: 'logs.index.colUntil' }), dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
         ]}
         expandable={{
           expandedRowRender: (row) => (
