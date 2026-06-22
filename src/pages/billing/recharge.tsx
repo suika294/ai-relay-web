@@ -16,15 +16,19 @@ import {
   Input,
   message,
   Modal,
+  QRCode,
   Space,
+  Spin,
   Tag,
   Typography,
 } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useIntl } from '@umijs/max';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
 
 export default function Recharge() {
+  const intl = useIntl();
   const orderRef = useRef<ActionType>();
 
   // 订单 SummaryBar:与 ProTable 同源时间窗,每次 request 时与 listOrders 并行调。
@@ -33,23 +37,56 @@ export default function Recharge() {
 
   const summaryStats: SummaryStat[] = [
     {
-      label: '总订单',
+      label: intl.formatMessage({ id: 'billing.recharge.summary.total' }),
       value: summary?.total ?? 0,
-      hint: summary ? `待支付 ${summary.pending} · 已退款 ${summary.refunded}` : undefined,
+      hint: summary
+        ? intl.formatMessage(
+            { id: 'billing.recharge.summary.totalHint' },
+            { pending: summary.pending, refunded: summary.refunded },
+          )
+        : undefined,
     },
     {
-      label: '已支付',
+      label: intl.formatMessage({ id: 'billing.recharge.summary.paid' }),
       value: summary?.paid ?? 0,
       tone: 'success',
     },
     {
-      label: '失败 / 取消',
+      label: intl.formatMessage({ id: 'billing.recharge.summary.failedCanceled' }),
       value: summary ? summary.failed + summary.canceled : 0,
       tone: summary && summary.failed + summary.canceled > 0 ? 'danger' : 'default',
     },
-    { label: '已支付 USD', value: summary ? `$${summary.paid_usd}` : '—' },
-    { label: '已支付 Quota', value: summary?.paid_quota ?? 0 },
+    { label: intl.formatMessage({ id: 'billing.recharge.summary.paidUsd' }), value: summary ? `$${summary.paid_usd}` : '—' },
+    { label: intl.formatMessage({ id: 'billing.recharge.summary.paidQuota' }), value: summary?.paid_quota ?? 0 },
   ];
+
+  // ---- 微信扫码弹窗（受控，便于轮询查单后自动关闭）----
+  type WxPay = {
+    qr: string;
+    order: { order_no: string; usd_amount: string; quota_amount: number };
+  };
+  const [wxPay, setWxPay] = useState<WxPay | null>(null);
+
+  // 弹窗打开后轮询查单：上游确认已支付(status===1)就自动关窗 + 刷新列表。
+  // 不依赖异步回调，本地无公网回调也能确认。组件卸载 / 关窗时清掉定时器。
+  useEffect(() => {
+    if (!wxPay) return;
+    const orderNo = wxPay.order.order_no;
+    const timer = setInterval(async () => {
+      try {
+        const r = await billingApi.queryOrderStatus(orderNo);
+        if (r.code === 0 && r.data?.status === 1) {
+          clearInterval(timer);
+          setWxPay(null);
+          message.success(intl.formatMessage({ id: 'billing.recharge.paySuccessToast' }));
+          orderRef.current?.reload();
+        }
+      } catch {
+        // 查单偶发失败不打断轮询，下个 tick 再试
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [wxPay]);
 
   // ---- 充值（走 ModalForm）----
   const handlePay = async (values: { amount: number; currency: string; method: string }) => {
@@ -60,19 +97,30 @@ export default function Recharge() {
     });
     if (res.code !== 0 || !res.data) return false;
     if (res.data.pay_url) {
+      // 支付宝 PC 网页:直接跳上游收银台
       window.open(res.data.pay_url, '_blank');
+    } else if (res.data.qr_code) {
+      // 微信 Native:qr_code 是 weixin:// 深链,渲染成二维码 + 轮询查单（见 wxPay 弹窗）
+      setWxPay({
+        qr: res.data.qr_code,
+        order: {
+          order_no: res.data.order_no,
+          usd_amount: res.data.usd_amount,
+          quota_amount: res.data.quota_amount,
+        },
+      });
     } else {
       Modal.info({
-        title: '订单已创建',
+        title: intl.formatMessage({ id: 'billing.recharge.orderCreatedTitle' }),
         width: 520,
         content: (
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label="订单号">{res.data.order_no}</Descriptions.Item>
-            <Descriptions.Item label="折合 USD">${res.data.usd_amount}</Descriptions.Item>
-            <Descriptions.Item label="折算 Quota">{res.data.quota_amount}</Descriptions.Item>
-            <Descriptions.Item label="汇率">{res.data.exchange_rate}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.orderNo' })}>{res.data.order_no}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.usd' })}>${res.data.usd_amount}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.quota' })}>{res.data.quota_amount}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.exchangeRate' })}>{res.data.exchange_rate}</Descriptions.Item>
             {values.method === 'manual' && (
-              <Descriptions.Item label="提示">等待管理员手动确认入账</Descriptions.Item>
+              <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.note' })}>{intl.formatMessage({ id: 'billing.recharge.manualConfirmNote' })}</Descriptions.Item>
             )}
           </Descriptions>
         ),
@@ -91,14 +139,14 @@ export default function Recharge() {
   const submitRedeem = async () => {
     const c = code.trim();
     if (!c) {
-      message.warning('请输入兑换码');
+      message.warning(intl.formatMessage({ id: 'billing.recharge.redeemEmptyWarning' }));
       return;
     }
     setRedeeming(true);
     try {
       const res = await billingApi.redeem(c);
       if (res.code === 0 && res.data) {
-        message.success(`兑换成功，+${res.data.quota_amount} quota`);
+        message.success(intl.formatMessage({ id: 'billing.recharge.redeemSuccessToast' }, { amount: res.data.quota_amount }));
         setCode('');
         redeemTableRef.current?.reload();
       }
@@ -110,45 +158,46 @@ export default function Recharge() {
   const headerActions = (
     <Space>
       <ModalForm<{ amount: number; currency: string; method: string }>
-        title="新建充值订单"
+        title={intl.formatMessage({ id: 'billing.recharge.newOrderTitle' })}
         width={480}
         trigger={
           <Button type="primary" icon={<WalletOutlined />}>
-            充值
+            {intl.formatMessage({ id: 'billing.recharge.rechargeBtn' })}
           </Button>
         }
         modalProps={{ destroyOnClose: true }}
-        initialValues={{ amount: 100, currency: 'CNY', method: 'manual' }}
+        initialValues={{ amount: 100, currency: 'CNY', method: 'wechat' }}
         onFinish={handlePay}
       >
         <ProFormDigit
           name="amount"
-          label="金额"
+          label={intl.formatMessage({ id: 'billing.recharge.field.amount' })}
           min={0.01}
           fieldProps={{ step: 10 }}
           rules={[{ required: true }]}
         />
         <ProFormSelect
           name="currency"
-          label="币种"
+          label={intl.formatMessage({ id: 'billing.recharge.field.currency' })}
           options={['USD', 'CNY', 'EUR', 'JPY', 'GBP'].map((c) => ({ value: c, label: c }))}
           rules={[{ required: true }]}
         />
         <ProFormRadio.Group
           name="method"
-          label="支付方式"
+          label={intl.formatMessage({ id: 'billing.recharge.field.method' })}
           // Stripe 后端尚未实现(internal/pkg/payment/stripe.go 直接 not implemented),
           // UI 暂不暴露,避免用户选了 Stripe 走到 502。后端补齐后再加回选项。
+          // 目前开放微信 / 支付宝,Manual 先隐藏(需要时把下面一项加回即可)。
           options={[
-            { value: 'manual', label: 'Manual（手动确认）' },
-            { value: 'alipay', label: '支付宝' },
-            { value: 'wechat', label: '微信' },
+            // { value: 'manual', label: 'Manual（手动确认）' },
+            { value: 'alipay', label: intl.formatMessage({ id: 'billing.recharge.method.alipay' }) },
+            { value: 'wechat', label: intl.formatMessage({ id: 'billing.recharge.method.wechat' }) },
           ]}
           rules={[{ required: true }]}
         />
       </ModalForm>
       <Button icon={<GiftOutlined />} onClick={() => setRedeemOpen(true)}>
-        兑换
+        {intl.formatMessage({ id: 'billing.recharge.redeemBtn' })}
       </Button>
     </Space>
   );
@@ -157,7 +206,7 @@ export default function Recharge() {
     <PageContainer ghost header={{ title: '' }}>
       <SummaryBar stats={summaryStats} loading={summaryLoading && !summary} />
       <ProCard
-        title="充值订单"
+        title={intl.formatMessage({ id: 'billing.recharge.ordersCardTitle' })}
         extra={headerActions}
         headerBordered
         bodyStyle={{ padding: 0 }}
@@ -191,41 +240,68 @@ export default function Recharge() {
           }}
           columns={[
             {
-              title: '订单号',
+              title: intl.formatMessage({ id: 'billing.recharge.col.orderNo' }),
               dataIndex: 'order_no',
               ellipsis: true,
               copyable: true,
               width: 260,
               search: false,
             },
-            { title: '金额', search: false, render: (_, r) => `${r.amount} ${r.currency}` },
-            { title: 'Quota', dataIndex: 'quota_amount', search: false },
-            { title: '支付方式', dataIndex: 'payment_method', search: false },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.amount' }), search: false, render: (_, r) => `${r.amount} ${r.currency}` },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.quota' }), dataIndex: 'quota_amount', search: false },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.method' }), dataIndex: 'payment_method', search: false },
             {
-              title: '状态',
+              title: intl.formatMessage({ id: 'billing.recharge.col.status' }),
               dataIndex: 'status',
               search: false,
               valueEnum: {
-                0: { text: '待支付', status: 'Default' },
-                1: { text: '已支付', status: 'Success' },
-                2: { text: '已退款', status: 'Warning' },
-                3: { text: '已取消', status: 'Default' },
-                4: { text: '失败', status: 'Error' },
+                0: { text: intl.formatMessage({ id: 'billing.recharge.status.pending' }), status: 'Default' },
+                1: { text: intl.formatMessage({ id: 'billing.recharge.status.paid' }), status: 'Success' },
+                2: { text: intl.formatMessage({ id: 'billing.recharge.status.refunded' }), status: 'Warning' },
+                3: { text: intl.formatMessage({ id: 'billing.recharge.status.canceled' }), status: 'Default' },
+                4: { text: intl.formatMessage({ id: 'billing.recharge.status.failed' }), status: 'Error' },
               },
             },
-            { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime', search: false },
-            { title: '开始时间', dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
-            { title: '结束时间', dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.createdAt' }), dataIndex: 'created_at', valueType: 'dateTime', search: false },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.since' }), dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.until' }), dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
           ]}
         />
       </ProCard>
+
+      {/* 微信扫码支付弹窗：渲染二维码 + 后台轮询查单，付款后自动关闭 */}
+      <Modal
+        title={intl.formatMessage({ id: 'billing.recharge.wxModalTitle' })}
+        open={!!wxPay}
+        onCancel={() => setWxPay(null)}
+        footer={null}
+        width={420}
+        destroyOnHidden
+      >
+        {wxPay && (
+          <Space direction="vertical" align="center" style={{ width: '100%' }}>
+            <QRCode value={wxPay.qr} size={200} />
+            <Space size={6}>
+              <Spin size="small" />
+              <Typography.Text type="secondary">
+                {intl.formatMessage({ id: 'billing.recharge.wxScanHint' })}
+              </Typography.Text>
+            </Space>
+            <Descriptions column={1} size="small" bordered style={{ width: '100%' }}>
+              <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.orderNo' })}>{wxPay.order.order_no}</Descriptions.Item>
+              <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.usd' })}>${wxPay.order.usd_amount}</Descriptions.Item>
+              <Descriptions.Item label={intl.formatMessage({ id: 'billing.recharge.field.quota' })}>{wxPay.order.quota_amount}</Descriptions.Item>
+            </Descriptions>
+          </Space>
+        )}
+      </Modal>
 
       {/* 兑换弹窗：顶部输入 + 提交；下面是历史列表（首次打开懒加载） */}
       <Modal
         title={
           <Space>
             <GiftOutlined />
-            <span>兑换码</span>
+            <span>{intl.formatMessage({ id: 'billing.recharge.redeemModalTitle' })}</span>
           </Space>
         }
         open={redeemOpen}
@@ -236,7 +312,7 @@ export default function Recharge() {
       >
         <Space.Compact style={{ width: '100%' }}>
           <Input
-            placeholder="粘贴客服或邀请人给你的兑换码"
+            placeholder={intl.formatMessage({ id: 'billing.recharge.redeemInputPlaceholder' })}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             onPressEnter={submitRedeem}
@@ -249,13 +325,13 @@ export default function Recharge() {
             loading={redeeming}
             onClick={submitRedeem}
           >
-            立即兑换
+            {intl.formatMessage({ id: 'billing.recharge.redeemNowBtn' })}
           </Button>
         </Space.Compact>
 
         <Divider orientation="left" plain style={{ marginTop: 20 }}>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            兑换历史
+            {intl.formatMessage({ id: 'billing.recharge.redeemHistory' })}
           </Typography.Text>
         </Divider>
 
@@ -280,14 +356,14 @@ export default function Recharge() {
           }}
           columns={[
             {
-              title: '兑换码',
+              title: intl.formatMessage({ id: 'billing.recharge.col.redeemCode' }),
               dataIndex: 'ref_id',
               copyable: true,
               ellipsis: true,
               render: (_, r) => (r.ref_id ? <Tag color="cyan">{r.ref_id}</Tag> : '-'),
             },
             {
-              title: '增加 Quota',
+              title: intl.formatMessage({ id: 'billing.recharge.col.addedQuota' }),
               dataIndex: 'quota_amount',
               render: (_, r) => {
                 const n = Number(r.quota_amount) || 0;
@@ -301,7 +377,7 @@ export default function Recharge() {
                 );
               },
             },
-            { title: '时间', dataIndex: 'created_at', valueType: 'dateTime' },
+            { title: intl.formatMessage({ id: 'billing.recharge.col.time' }), dataIndex: 'created_at', valueType: 'dateTime' },
           ]}
           pagination={{ pageSize: 5, showSizeChanger: false, simple: true }}
         />

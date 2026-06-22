@@ -1,16 +1,18 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
 import { Tag } from 'antd';
 import { useState } from 'react';
+import { useIntl } from '@umijs/max';
+import { t } from '@/utils/i18n';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
 
 const typeMap: Record<string, { text: string; color: string }> = {
-  recharge: { text: '充值', color: 'green' },
-  consume: { text: '消费', color: 'blue' },
-  refund: { text: '退款', color: 'orange' },
-  redeem: { text: '兑换', color: 'cyan' },
-  commission: { text: '返佣', color: 'gold' },
-  admin: { text: '管理员调整', color: 'purple' },
+  recharge: { text: t('billing.records.typeRecharge'), color: 'green' },
+  consume: { text: t('billing.records.typeConsume'), color: 'blue' },
+  refund: { text: t('billing.records.typeRefund'), color: 'orange' },
+  redeem: { text: t('billing.records.typeRedeem'), color: 'cyan' },
+  commission: { text: t('billing.records.typeCommission'), color: 'gold' },
+  admin: { text: t('billing.records.typeAdmin'), color: 'purple' },
 };
 
 // 按 type 渲染 SummaryBar 的一格:label 用中文,value 是带符号的 quota 数字,
@@ -18,34 +20,36 @@ const typeMap: Record<string, { text: string; color: string }> = {
 // 后端 SUM(quota_amount) 自带符号,所以这里只看符号 tone,不用按 type 硬编码。
 function buildRecordStats(s: API.RecordsSummary | null): SummaryStat[] {
   if (!s) {
-    return [{ label: '总笔数', value: 0 }];
+    return [{ label: t('billing.records.totalCount'), value: 0 }];
   }
   // 类型展示顺序固定(避免数据库 GROUP BY 顺序抖动让 UI 闪),与 typeMap 一致
   const order = ['recharge', 'consume', 'refund', 'redeem', 'commission', 'admin'];
-  const byType = new Map(s.by_type.map((it) => [it.type, it]));
-  const stats: SummaryStat[] = [{ label: '总笔数', value: s.total }];
-  for (const t of order) {
-    const it = byType.get(t);
+  // by_type 可能为 null(后端无记录时 GROUP BY 出 0 行,JSON 序列化成 null)
+  const byTypeList = s.by_type ?? [];
+  const byType = new Map(byTypeList.map((it) => [it.type, it]));
+  const stats: SummaryStat[] = [{ label: t('billing.records.totalCount'), value: s.total }];
+  for (const t2 of order) {
+    const it = byType.get(t2);
     if (!it) continue;
-    const m = typeMap[t] ?? { text: t, color: 'default' };
+    const m = typeMap[t2] ?? { text: t2, color: 'default' };
     const q = it.quota_total;
     const sign = q > 0 ? '+' : '';
     stats.push({
       label: m.text,
       value: `${sign}${q.toLocaleString()}`,
-      hint: `${it.count} 笔`,
+      hint: t('billing.records.countSuffix', { count: it.count }),
       tone: q > 0 ? 'success' : q < 0 ? 'danger' : 'default',
     });
   }
   // 兜底:出现 order 之外的 type(后端将来加新枚举),也显示出来
-  for (const it of s.by_type) {
+  for (const it of byTypeList) {
     if (order.includes(it.type)) continue;
     const q = it.quota_total;
     const sign = q > 0 ? '+' : '';
     stats.push({
       label: it.type,
       value: `${sign}${q.toLocaleString()}`,
-      hint: `${it.count} 笔`,
+      hint: t('billing.records.countSuffix', { count: it.count }),
       tone: q > 0 ? 'success' : q < 0 ? 'danger' : 'default',
     });
   }
@@ -53,11 +57,12 @@ function buildRecordStats(s: API.RecordsSummary | null): SummaryStat[] {
 }
 
 export default function Records() {
+  const intl = useIntl();
   const [summary, setSummary] = useState<API.RecordsSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
   return (
-    <PageContainer title="账单流水">
+    <PageContainer title={intl.formatMessage({ id: 'billing.records.title' })}>
       <SummaryBar stats={buildRecordStats(summary)} loading={summaryLoading && !summary} />
       <ProTable<API.BillingRecord>
         rowKey="id"
@@ -86,9 +91,14 @@ export default function Records() {
           };
         }}
         columns={[
-          { title: '时间', dataIndex: 'created_at', valueType: 'dateTime', search: false },
           {
-            title: '类型',
+            title: intl.formatMessage({ id: 'billing.records.colTime' }),
+            dataIndex: 'created_at',
+            valueType: 'dateTime',
+            search: false,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colType' }),
             dataIndex: 'type',
             valueEnum: Object.fromEntries(
               Object.entries(typeMap).map(([k, v]) => [k, { text: v.text }]),
@@ -99,7 +109,7 @@ export default function Records() {
             },
           },
           {
-            title: 'Quota 变动',
+            title: intl.formatMessage({ id: 'billing.records.colQuotaChange' }),
             dataIndex: 'quota_amount',
             search: false,
             render: (v) => {
@@ -112,17 +122,45 @@ export default function Records() {
             },
           },
           {
-            title: '展示金额',
+            title: intl.formatMessage({ id: 'billing.records.colDisplayAmount' }),
             search: false,
             render: (_, row) =>
               row.display_amount ? `${row.display_amount} ${row.display_currency}` : `$${row.usd_amount}`,
           },
-          { title: '余额（后）', dataIndex: 'balance_quota_after', search: false },
-          { title: '支付方式', dataIndex: 'payment_method', search: false },
-          { title: '关联', dataIndex: 'ref_id', ellipsis: true, search: false },
-          { title: '备注', dataIndex: 'remark', ellipsis: true, search: false },
-          { title: '开始时间', dataIndex: 'since', valueType: 'dateTime', hideInTable: true },
-          { title: '结束时间', dataIndex: 'until', valueType: 'dateTime', hideInTable: true },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colBalanceAfter' }),
+            dataIndex: 'balance_quota_after',
+            search: false,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colPaymentMethod' }),
+            dataIndex: 'payment_method',
+            search: false,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colRef' }),
+            dataIndex: 'ref_id',
+            ellipsis: true,
+            search: false,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colRemark' }),
+            dataIndex: 'remark',
+            ellipsis: true,
+            search: false,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colSince' }),
+            dataIndex: 'since',
+            valueType: 'dateTime',
+            hideInTable: true,
+          },
+          {
+            title: intl.formatMessage({ id: 'billing.records.colUntil' }),
+            dataIndex: 'until',
+            valueType: 'dateTime',
+            hideInTable: true,
+          },
         ]}
       />
     </PageContainer>

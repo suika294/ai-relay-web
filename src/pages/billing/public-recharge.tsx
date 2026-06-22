@@ -7,7 +7,7 @@ import {
 } from '@ant-design/pro-components';
 import type { ActionType } from '@ant-design/pro-components';
 import { GiftOutlined, WalletOutlined } from '@ant-design/icons';
-import { useModel } from '@umijs/max';
+import { useIntl, useModel } from '@umijs/max';
 import {
   Button,
   Card,
@@ -30,6 +30,7 @@ import { billingApi } from '@/services/api';
 //   - 控制台版本仍在 /console/billing/recharge,两者复用同一组接口
 //   - 视觉上裹一层 Card 让它在 PublicLayout 的 #fafafa 背景上不"裸奔"
 export default function PublicRecharge() {
+  const intl = useIntl();
   const { initialState } = useModel('@@initialState');
   const user = initialState?.currentUser;
 
@@ -72,16 +73,16 @@ export default function PublicRecharge() {
       window.open(res.data.pay_url, '_blank');
     } else {
       Modal.info({
-        title: '订单已创建',
+        title: intl.formatMessage({ id: 'billing.publicRecharge.orderCreated' }),
         width: 520,
         content: (
           <Descriptions column={1} size="small" bordered>
-            <Descriptions.Item label="订单号">{res.data.order_no}</Descriptions.Item>
-            <Descriptions.Item label="折合 USD">${res.data.usd_amount}</Descriptions.Item>
-            <Descriptions.Item label="折算 Quota">{res.data.quota_amount}</Descriptions.Item>
-            <Descriptions.Item label="汇率">{res.data.exchange_rate}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.publicRecharge.orderNo' })}>{res.data.order_no}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.publicRecharge.usdEquivalent' })}>${res.data.usd_amount}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.publicRecharge.quotaEquivalent' })}>{res.data.quota_amount}</Descriptions.Item>
+            <Descriptions.Item label={intl.formatMessage({ id: 'billing.publicRecharge.exchangeRate' })}>{res.data.exchange_rate}</Descriptions.Item>
             {values.method === 'manual' && (
-              <Descriptions.Item label="提示">等待管理员手动确认入账</Descriptions.Item>
+              <Descriptions.Item label={intl.formatMessage({ id: 'billing.publicRecharge.tipLabel' })}>{intl.formatMessage({ id: 'billing.publicRecharge.manualConfirmTip' })}</Descriptions.Item>
             )}
           </Descriptions>
         ),
@@ -94,14 +95,14 @@ export default function PublicRecharge() {
   const submitRedeem = async () => {
     const c = code.trim();
     if (!c) {
-      message.warning('请输入兑换码');
+      message.warning(intl.formatMessage({ id: 'billing.publicRecharge.codeRequired' }));
       return;
     }
     setRedeeming(true);
     try {
       const res = await billingApi.redeem(c);
       if (res.code === 0 && res.data) {
-        message.success(`兑换成功,+${res.data.quota_amount} quota`);
+        message.success(intl.formatMessage({ id: 'billing.publicRecharge.redeemSuccess' }, { quota: res.data.quota_amount }));
         setCode('');
         redeemTableRef.current?.reload();
       }
@@ -114,21 +115,21 @@ export default function PublicRecharge() {
     <PublicLayout>
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 24px 80px' }}>
         <Typography.Title level={2} style={{ marginBottom: 8 }}>
-          充值 · 兑换
+          {intl.formatMessage({ id: 'billing.publicRecharge.title' })}
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ fontSize: 15, marginBottom: 24 }}>
-          支持充值入账和兑换码两种方式增加额度。{user ? '' : '点击下方按钮将先要求登录。'}
+          {intl.formatMessage({ id: 'billing.publicRecharge.subtitle' })}{user ? '' : intl.formatMessage({ id: 'billing.publicRecharge.loginHint' })}
         </Typography.Paragraph>
 
         <Card
-          title="充值订单"
+          title={intl.formatMessage({ id: 'billing.publicRecharge.rechargeOrders' })}
           extra={
             <Space>
               <Button type="primary" icon={<WalletOutlined />} onClick={openRecharge}>
-                充值
+                {intl.formatMessage({ id: 'billing.publicRecharge.rechargeBtn' })}
               </Button>
               <Button icon={<GiftOutlined />} onClick={openRedeem}>
-                兑换
+                {intl.formatMessage({ id: 'billing.publicRecharge.redeemBtn' })}
               </Button>
             </Space>
           }
@@ -151,27 +152,27 @@ export default function PublicRecharge() {
                 };
               }}
               columns={[
-                { title: '订单号', dataIndex: 'order_no', ellipsis: true, copyable: true, width: 260 },
-                { title: '金额', render: (_, r) => `${r.amount} ${r.currency}` },
+                { title: intl.formatMessage({ id: 'billing.publicRecharge.orderNo' }), dataIndex: 'order_no', ellipsis: true, copyable: true, width: 260 },
+                { title: intl.formatMessage({ id: 'billing.publicRecharge.amount' }), render: (_, r) => `${r.amount} ${r.currency}` },
                 { title: 'Quota', dataIndex: 'quota_amount' },
-                { title: '支付方式', dataIndex: 'payment_method' },
+                { title: intl.formatMessage({ id: 'billing.publicRecharge.paymentMethod' }), dataIndex: 'payment_method' },
                 {
-                  title: '状态',
+                  title: intl.formatMessage({ id: 'billing.publicRecharge.status' }),
                   dataIndex: 'status',
                   valueEnum: {
-                    0: { text: '待支付', status: 'Default' },
-                    1: { text: '已支付', status: 'Success' },
-                    2: { text: '已退款', status: 'Warning' },
-                    3: { text: '已取消', status: 'Default' },
-                    4: { text: '失败', status: 'Error' },
+                    0: { text: intl.formatMessage({ id: 'billing.publicRecharge.statusUnpaid' }), status: 'Default' },
+                    1: { text: intl.formatMessage({ id: 'billing.publicRecharge.statusPaid' }), status: 'Success' },
+                    2: { text: intl.formatMessage({ id: 'billing.publicRecharge.statusRefunded' }), status: 'Warning' },
+                    3: { text: intl.formatMessage({ id: 'billing.publicRecharge.statusCancelled' }), status: 'Default' },
+                    4: { text: intl.formatMessage({ id: 'billing.publicRecharge.statusFailed' }), status: 'Error' },
                   },
                 },
-                { title: '创建时间', dataIndex: 'created_at', valueType: 'dateTime' },
+                { title: intl.formatMessage({ id: 'billing.publicRecharge.createdAt' }), dataIndex: 'created_at', valueType: 'dateTime' },
               ]}
             />
           ) : (
             <div style={{ padding: '36px 0', textAlign: 'center', color: '#999' }}>
-              登录后可查看你的充值订单
+              {intl.formatMessage({ id: 'billing.publicRecharge.loginToView' })}
             </div>
           )}
         </Card>
@@ -179,11 +180,11 @@ export default function PublicRecharge() {
 
       {/* 充值表单弹窗:登录后才会被打开,所以这里不再做登录判断 */}
       <ModalForm<{ amount: number; currency: string; method: string }>
-        title="新建充值订单"
+        title={intl.formatMessage({ id: 'billing.publicRecharge.newOrderTitle' })}
         width={480}
         open={rechargeOpen}
         modalProps={{ destroyOnClose: true, onCancel: () => setRechargeOpen(false) }}
-        initialValues={{ amount: 100, currency: 'CNY', method: 'manual' }}
+        initialValues={{ amount: 100, currency: 'CNY', method: 'wechat' }}
         onFinish={async (values) => {
           const ok = await handlePay(values);
           if (ok) setRechargeOpen(false);
@@ -192,26 +193,27 @@ export default function PublicRecharge() {
       >
         <ProFormDigit
           name="amount"
-          label="金额"
+          label={intl.formatMessage({ id: 'billing.publicRecharge.amount' })}
           min={0.01}
           fieldProps={{ step: 10 }}
           rules={[{ required: true }]}
         />
         <ProFormSelect
           name="currency"
-          label="币种"
+          label={intl.formatMessage({ id: 'billing.publicRecharge.currency' })}
           options={['USD', 'CNY', 'EUR', 'JPY', 'GBP'].map((c) => ({ value: c, label: c }))}
           rules={[{ required: true }]}
         />
         <ProFormRadio.Group
           name="method"
-          label="支付方式"
+          label={intl.formatMessage({ id: 'billing.publicRecharge.paymentMethod' })}
           // Stripe 后端尚未实现(internal/pkg/payment/stripe.go 直接 not implemented),
           // UI 暂不暴露,避免用户选了 Stripe 走到 502。后端补齐后再加回选项。
+          // 目前开放微信 / 支付宝,Manual 先隐藏(需要时把下面一项加回即可)。
           options={[
-            { value: 'manual', label: 'Manual(手动确认)' },
-            { value: 'alipay', label: '支付宝' },
-            { value: 'wechat', label: '微信' },
+            // { value: 'manual', label: 'Manual(手动确认)' },
+            { value: 'alipay', label: intl.formatMessage({ id: 'billing.publicRecharge.methodAlipay' }) },
+            { value: 'wechat', label: intl.formatMessage({ id: 'billing.publicRecharge.methodWechat' }) },
           ]}
           rules={[{ required: true }]}
         />
@@ -222,7 +224,7 @@ export default function PublicRecharge() {
         title={
           <Space>
             <GiftOutlined />
-            <span>兑换码</span>
+            <span>{intl.formatMessage({ id: 'billing.publicRecharge.redeemCode' })}</span>
           </Space>
         }
         open={redeemOpen}
@@ -233,7 +235,7 @@ export default function PublicRecharge() {
       >
         <Space.Compact style={{ width: '100%' }}>
           <Input
-            placeholder="粘贴客服或邀请人给你的兑换码"
+            placeholder={intl.formatMessage({ id: 'billing.publicRecharge.codePlaceholder' })}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             onPressEnter={submitRedeem}
@@ -246,13 +248,13 @@ export default function PublicRecharge() {
             loading={redeeming}
             onClick={submitRedeem}
           >
-            立即兑换
+            {intl.formatMessage({ id: 'billing.publicRecharge.redeemNow' })}
           </Button>
         </Space.Compact>
 
         <Divider orientation="left" plain style={{ marginTop: 20 }}>
           <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            兑换历史
+            {intl.formatMessage({ id: 'billing.publicRecharge.redeemHistory' })}
           </Typography.Text>
         </Divider>
 
@@ -277,14 +279,14 @@ export default function PublicRecharge() {
           }}
           columns={[
             {
-              title: '兑换码',
+              title: intl.formatMessage({ id: 'billing.publicRecharge.redeemCode' }),
               dataIndex: 'ref_id',
               copyable: true,
               ellipsis: true,
               render: (_, r) => (r.ref_id ? <Tag color="cyan">{r.ref_id}</Tag> : '-'),
             },
             {
-              title: '增加 Quota',
+              title: intl.formatMessage({ id: 'billing.publicRecharge.quotaAdded' }),
               dataIndex: 'quota_amount',
               render: (_, r) => {
                 const n = Number(r.quota_amount) || 0;
@@ -298,7 +300,7 @@ export default function PublicRecharge() {
                 );
               },
             },
-            { title: '时间', dataIndex: 'created_at', valueType: 'dateTime' },
+            { title: intl.formatMessage({ id: 'billing.publicRecharge.time' }), dataIndex: 'created_at', valueType: 'dateTime' },
           ]}
           pagination={{ pageSize: 5, showSizeChanger: false, simple: true }}
         />
