@@ -1,0 +1,23 @@
+// zh-CN — common（跨页面通用词，请优先复用，避免重复 key）
+export default {
+  'common.confirm': '确定',
+  'common.cancel': '取消',
+  'common.save': '保存',
+  'common.delete': '删除',
+  'common.edit': '编辑',
+  'common.create': '新建',
+  'common.search': '搜索',
+  'common.loading': '加载中…',
+  'common.noData': '暂无数据',
+  'common.success': '操作成功',
+  'common.failed': '操作失败',
+  'common.copy': '复制',
+  'common.copied': '已复制',
+  'common.close': '关闭',
+  'common.submit': '提交',
+  'common.reset': '重置',
+  'common.back': '返回',
+  'common.notLoggedIn': '未登录',
+  'common.requestFailed': '请求失败',
+  'common.bizError': '业务错误',
+};

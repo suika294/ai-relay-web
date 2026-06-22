@@ -1,0 +1,26 @@
+// AUTO-GENERATED from .frags — do not edit by hand
+export default {
+  "dashboard.title": "Overview",
+  "dashboard.refresh": "Refresh",
+  "dashboard.loadFailed": "Failed to load: {error}",
+  "dashboard.retry": "Retry",
+  "dashboard.balanceTitle": "Balance ({currency})",
+  "dashboard.quotaInternalUnit": "quota (internal unit)",
+  "dashboard.balanceEmpty": "Balance unavailable. Please refresh or check your network.",
+  "dashboard.exchangeRateTitle": "Current Rate (USD → {currency})",
+  "dashboard.todayRequests": "Requests Today",
+  "dashboard.successFailure": "Success {success} · Failed {failure}",
+  "dashboard.todayTokens": "Tokens Used Today",
+  "dashboard.monthTotal": "This Month's Total",
+  "dashboard.tokensCount": "tokens {tokens}",
+  "dashboard.trendTitle": "Usage Trend (Last 30 Days)",
+  "dashboard.noUsageData": "No usage data yet. Try it out in the Playground.",
+  "dashboard.modelDistribution": "Model Distribution (Last 30 Days)",
+  "dashboard.unknownModel": "(unknown)",
+  "dashboard.usageGuide": "Usage Guide",
+  "dashboard.guideBefore": "Go to the",
+  "dashboard.guideAfter": "page to create a Token (sk-...), then call this service just like you call OpenAI.",
+  "dashboard.availableModels": "Available models: ",
+  "dashboard.moreSee": "... see more in the",
+  "dashboard.modelMarket": "Model Market"
+} as Record<string, string>;

@@ -1,0 +1,23 @@
+// en-US — common
+export default {
+  'common.confirm': 'OK',
+  'common.cancel': 'Cancel',
+  'common.save': 'Save',
+  'common.delete': 'Delete',
+  'common.edit': 'Edit',
+  'common.create': 'Create',
+  'common.search': 'Search',
+  'common.loading': 'Loading…',
+  'common.noData': 'No data',
+  'common.success': 'Success',
+  'common.failed': 'Operation failed',
+  'common.copy': 'Copy',
+  'common.copied': 'Copied',
+  'common.close': 'Close',
+  'common.submit': 'Submit',
+  'common.reset': 'Reset',
+  'common.back': 'Back',
+  'common.notLoggedIn': 'Not signed in',
+  'common.requestFailed': 'Request failed',
+  'common.bizError': 'Something went wrong',
+};

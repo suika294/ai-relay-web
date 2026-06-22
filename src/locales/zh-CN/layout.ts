@@ -1,0 +1,57 @@
+// zh-CN — layout（PublicLayout 头部/页脚 + DocsLayout 文档导航）
+export default {
+  // 公开页头部导航
+  'layout.nav.home': '首页',
+  'layout.nav.models': '模型广场',
+  'layout.nav.recharge': '充值',
+  'layout.nav.docs': '文档中心',
+  'layout.nav.menu': '导航菜单',
+  // 公开页用户下拉
+  'layout.user.console': '进入控制台',
+  'layout.user.settings': '个人设置',
+  'layout.user.logout': '退出登录',
+  // 公开页按钮
+  'layout.btn.console': '进入控制台',
+  'layout.btn.login': '登录',
+  'layout.btn.register': '注册',
+  // 页脚
+  'layout.footer.slogan': '统一 AI API 中转服务。',
+  // 文档侧栏分组
+  'layout.docs.group.start': '快速开始',
+  'layout.docs.group.api': 'API 文档',
+  'layout.docs.group.reference': '参考',
+  'layout.docs.group.help': '帮助',
+  // 文档链接
+  'layout.docs.link.quickStart': '首次调用',
+  'layout.docs.link.auth': '认证',
+  'layout.docs.link.sdk': 'SDK 接入',
+  'layout.docs.link.chat': '对话 Chat',
+  'layout.docs.link.streaming': '流式响应',
+  'layout.docs.link.models': '模型列表',
+  'layout.docs.link.images': '图像生成',
+  'layout.docs.link.videos': '视频生成',
+  'layout.docs.link.templates': '场景特效',
+  'layout.docs.link.3d': '3D 生成',
+  'layout.docs.link.digitalHuman': '数智人',
+  'layout.docs.link.audio': '语音 Audio',
+  'layout.docs.link.embeddings': '向量 Embeddings',
+  'layout.docs.link.vectordb': '向量数据库',
+  'layout.docs.link.errors': '错误码',
+  'layout.docs.link.rateLimits': '限速',
+  'layout.docs.link.faq': '常见问题',
+  // 视频文档章节锚点
+  'layout.docs.sub.submit': '提交任务',
+  'layout.docs.sub.poll': '轮询状态',
+  'layout.docs.sub.i2v': '图生视频',
+  'layout.docs.sub.referenceVideo': '视频参考',
+  'layout.docs.sub.multiframe': '智能多帧',
+  'layout.docs.sub.virtualTryon': '虚拟试穿',
+  'layout.docs.sub.models': '模型速查',
+  // 文档其它
+  'layout.docs.toc': '目录',
+  'layout.docs.breadcrumbRoot': '文档',
+  'layout.docs.prev': '← 上一篇',
+  'layout.docs.next': '下一篇 →',
+  'layout.docs.drawerTitle': '文档目录',
+  'layout.docs.sideNavAria': '文档导航',
+};

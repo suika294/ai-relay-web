@@ -1,0 +1,26 @@
+// AUTO-GENERATED from .frags — do not edit by hand
+export default {
+  "dashboard.title": "总览",
+  "dashboard.refresh": "刷新",
+  "dashboard.loadFailed": "加载失败：{error}",
+  "dashboard.retry": "重试",
+  "dashboard.balanceTitle": "余额（{currency}）",
+  "dashboard.quotaInternalUnit": "quota（内部单位）",
+  "dashboard.balanceEmpty": "未获取到余额，请刷新或检查网络",
+  "dashboard.exchangeRateTitle": "当前汇率（USD → {currency}）",
+  "dashboard.todayRequests": "今日请求",
+  "dashboard.successFailure": "成功 {success} · 失败 {failure}",
+  "dashboard.todayTokens": "今日消耗 tokens",
+  "dashboard.monthTotal": "本月累计消耗",
+  "dashboard.tokensCount": "tokens {tokens}",
+  "dashboard.trendTitle": "近 30 天消耗趋势",
+  "dashboard.noUsageData": "还没有使用数据；去 Playground 试试看",
+  "dashboard.modelDistribution": "模型分布（近 30 天）",
+  "dashboard.unknownModel": "(未知)",
+  "dashboard.usageGuide": "使用说明",
+  "dashboard.guideBefore": "前往",
+  "dashboard.guideAfter": "页面创建一个 Token（sk-...），然后像调用 OpenAI 一样调用本服务",
+  "dashboard.availableModels": "可用模型：",
+  "dashboard.moreSee": "... 更多见",
+  "dashboard.modelMarket": "模型广场"
+} as Record<string, string>;
