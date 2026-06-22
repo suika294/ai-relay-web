@@ -1,62 +1,90 @@
 import { MenuOutlined, RightOutlined } from '@ant-design/icons';
-import { Link, Outlet, useLocation } from '@umijs/max';
+import { Link, Outlet, useIntl, useLocation } from '@umijs/max';
 import { Button, Drawer } from 'antd';
 import { useEffect, useState } from 'react';
 import { AuthModalProvider } from '@/components/AuthModalProvider';
 import PublicLayout from './PublicLayout';
 import './docs.css';
 
-type DocLink = { to: string; label: string };
-type DocGroup = { key: string; label: string; links: DocLink[] };
+// children:页内章节锚点(二级导航)。仅在该页为当前页时展开,点击平滑跳到对应
+// <h2 id="..."> 锚点。anchor 是不带 # 的 id。labelKey 是 i18n key,渲染时再解析。
+type DocSubLink = { anchor: string; labelKey: string };
+type DocLink = { to: string; labelKey: string; children?: DocSubLink[] };
+type DocGroup = { key: string; labelKey: string; links: DocLink[] };
 
 export const docsGroups: DocGroup[] = [
   {
     key: 'start',
-    label: '快速开始',
+    labelKey: 'layout.docs.group.start',
     links: [
-      { to: '/docs/quick-start', label: '首次调用' },
-      { to: '/docs/auth', label: '认证' },
-      { to: '/docs/sdk', label: 'SDK 接入' },
+      { to: '/docs/quick-start', labelKey: 'layout.docs.link.quickStart' },
+      { to: '/docs/auth', labelKey: 'layout.docs.link.auth' },
+      { to: '/docs/sdk', labelKey: 'layout.docs.link.sdk' },
     ],
   },
   {
     key: 'api',
-    label: 'API 文档',
+    labelKey: 'layout.docs.group.api',
     links: [
-      { to: '/docs/chat', label: '对话 Chat' },
-      { to: '/docs/streaming', label: '流式响应' },
-      { to: '/docs/models', label: '模型列表' },
-      { to: '/docs/images', label: '图像生成' },
-      { to: '/docs/videos', label: '视频生成' },
-      { to: '/docs/audio', label: '语音 Audio' },
-      { to: '/docs/embeddings', label: '向量 Embeddings' },
-      { to: '/docs/vectordb', label: '向量数据库' },
+      { to: '/docs/chat', labelKey: 'layout.docs.link.chat' },
+      { to: '/docs/streaming', labelKey: 'layout.docs.link.streaming' },
+      { to: '/docs/models', labelKey: 'layout.docs.link.models' },
+      { to: '/docs/images', labelKey: 'layout.docs.link.images' },
+      {
+        to: '/docs/videos',
+        labelKey: 'layout.docs.link.videos',
+        children: [
+          { anchor: 'submit', labelKey: 'layout.docs.sub.submit' },
+          { anchor: 'poll', labelKey: 'layout.docs.sub.poll' },
+          { anchor: 'i2v', labelKey: 'layout.docs.sub.i2v' },
+          { anchor: 'reference-video', labelKey: 'layout.docs.sub.referenceVideo' },
+          { anchor: 'multiframe', labelKey: 'layout.docs.sub.multiframe' },
+          { anchor: 'virtual-tryon', labelKey: 'layout.docs.sub.virtualTryon' },
+          { anchor: 'models', labelKey: 'layout.docs.sub.models' },
+        ],
+      },
+      { to: '/docs/templates', labelKey: 'layout.docs.link.templates' },
+      { to: '/docs/3d', labelKey: 'layout.docs.link.3d' },
+      { to: '/docs/digital-human', labelKey: 'layout.docs.link.digitalHuman' },
+      { to: '/docs/audio', labelKey: 'layout.docs.link.audio' },
+      { to: '/docs/embeddings', labelKey: 'layout.docs.link.embeddings' },
+      { to: '/docs/vectordb', labelKey: 'layout.docs.link.vectordb' },
     ],
   },
   {
     key: 'reference',
-    label: '参考',
+    labelKey: 'layout.docs.group.reference',
     links: [
-      { to: '/docs/errors', label: '错误码' },
-      { to: '/docs/rate-limits', label: '限速' },
+      { to: '/docs/errors', labelKey: 'layout.docs.link.errors' },
+      { to: '/docs/rate-limits', labelKey: 'layout.docs.link.rateLimits' },
     ],
   },
   {
     key: 'help',
-    label: '帮助',
-    links: [{ to: '/docs/faq', label: '常见问题' }],
+    labelKey: 'layout.docs.group.help',
+    links: [{ to: '/docs/faq', labelKey: 'layout.docs.link.faq' }],
   },
 ];
 
 // 把所有 link 拍平,方便上下篇导航
 const flatLinks: DocLink[] = docsGroups.flatMap((g) => g.links);
 
-function SideNav({ pathname, onPick }: { pathname: string; onPick?: () => void }) {
+function SideNav({
+  pathname,
+  hash,
+  onPick,
+}: {
+  pathname: string;
+  hash: string;
+  onPick?: () => void;
+}) {
+  const intl = useIntl();
+  const t = (id: string) => intl.formatMessage({ id });
   return (
-    <nav className="docs-side-nav" aria-label="文档导航">
+    <nav className="docs-side-nav" aria-label={t('layout.docs.sideNavAria')}>
       {docsGroups.map((g) => (
         <div key={g.key} className="docs-side-group">
-          <div className="docs-side-group-title">{g.label}</div>
+          <div className="docs-side-group-title">{t(g.labelKey)}</div>
           <ul>
             {g.links.map((l) => {
               const active = pathname === l.to;
@@ -67,8 +95,23 @@ function SideNav({ pathname, onPick }: { pathname: string; onPick?: () => void }
                     className={active ? 'active' : ''}
                     onClick={onPick}
                   >
-                    {l.label}
+                    {t(l.labelKey)}
                   </Link>
+                  {active && l.children && l.children.length > 0 && (
+                    <ul className="docs-side-sublist">
+                      {l.children.map((c) => (
+                        <li key={c.anchor}>
+                          <Link
+                            to={`${l.to}#${c.anchor}`}
+                            className={hash === `#${c.anchor}` ? 'active' : ''}
+                            onClick={onPick}
+                          >
+                            {t(c.labelKey)}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               );
             })}
@@ -80,16 +123,32 @@ function SideNav({ pathname, onPick }: { pathname: string; onPick?: () => void }
 }
 
 export default function DocsLayout() {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
+  const intl = useIntl();
+  const t = (id: string) => intl.formatMessage({ id });
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 每次切换路由时:
+  // 每次切换路由 / 锚点时:
   //   1. 关掉移动端的抽屉
-  //   2. 滚动正文区回到顶部 —— 不然从长页(比如错误码)跳到短页,会停在中间
+  //   2. 带 #anchor 时滚到对应章节(scroll-margin-top 让出 sticky header 高度);
+  //      否则滚回顶部 —— 不然从长页(比如错误码)跳到短页会停在中间
   useEffect(() => {
     setDrawerOpen(false);
-    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-  }, [pathname]);
+    if (hash) {
+      const id = decodeURIComponent(hash.slice(1));
+      // 等正文渲染完再定位锚点(切页时 DOM 尚未挂载)
+      requestAnimationFrame(() => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.scrollIntoView({ behavior: 'instant' as ScrollBehavior, block: 'start' });
+        } else {
+          window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+        }
+      });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+    }
+  }, [pathname, hash]);
 
   // 上一页 / 下一页
   const idx = flatLinks.findIndex((l) => l.to === pathname);
@@ -106,7 +165,7 @@ export default function DocsLayout() {
     <PublicLayout>
       <div className="docs-shell">
         <aside className="docs-side">
-          <SideNav pathname={pathname} />
+          <SideNav pathname={pathname} hash={hash} />
         </aside>
 
         <div className="docs-main-wrap">
@@ -116,14 +175,14 @@ export default function DocsLayout() {
               icon={<MenuOutlined />}
               onClick={() => setDrawerOpen(true)}
             >
-              目录
+              {t('layout.docs.toc')}
             </Button>
             {currentGroup && currentLink && (
               <div className="docs-breadcrumb">
-                <span>{currentGroup.label}</span>
+                <span>{t(currentGroup.labelKey)}</span>
                 <RightOutlined />
                 <span className="docs-breadcrumb-current">
-                  {currentLink.label}
+                  {t(currentLink.labelKey)}
                 </span>
               </div>
             )}
@@ -131,12 +190,12 @@ export default function DocsLayout() {
 
           {currentGroup && currentLink && (
             <div className="docs-breadcrumb docs-breadcrumb-desktop">
-              <span>文档</span>
+              <span>{t('layout.docs.breadcrumbRoot')}</span>
               <RightOutlined />
-              <span>{currentGroup.label}</span>
+              <span>{t(currentGroup.labelKey)}</span>
               <RightOutlined />
               <span className="docs-breadcrumb-current">
-                {currentLink.label}
+                {t(currentLink.labelKey)}
               </span>
             </div>
           )}
@@ -151,16 +210,16 @@ export default function DocsLayout() {
             <div className="docs-pager">
               {prev ? (
                 <Link to={prev.to} className="docs-pager-card docs-pager-prev">
-                  <span className="docs-pager-k">← 上一篇</span>
-                  <span className="docs-pager-v">{prev.label}</span>
+                  <span className="docs-pager-k">{t('layout.docs.prev')}</span>
+                  <span className="docs-pager-v">{t(prev.labelKey)}</span>
                 </Link>
               ) : (
                 <span />
               )}
               {next ? (
                 <Link to={next.to} className="docs-pager-card docs-pager-next">
-                  <span className="docs-pager-k">下一篇 →</span>
-                  <span className="docs-pager-v">{next.label}</span>
+                  <span className="docs-pager-k">{t('layout.docs.next')}</span>
+                  <span className="docs-pager-v">{t(next.labelKey)}</span>
                 </Link>
               ) : (
                 <span />
@@ -171,13 +230,13 @@ export default function DocsLayout() {
       </div>
 
       <Drawer
-        title="文档目录"
+        title={t('layout.docs.drawerTitle')}
         placement="left"
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         width={280}
       >
-        <SideNav pathname={pathname} onPick={() => setDrawerOpen(false)} />
+        <SideNav pathname={pathname} hash={hash} onPick={() => setDrawerOpen(false)} />
       </Drawer>
     </PublicLayout>
   );

@@ -1,32 +1,42 @@
-import { Link } from '@umijs/max';
+import { Link, useIntl } from '@umijs/max';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout, CodeBlock, TabbedCode, useApiBase } from './_shared';
 
 export default function DocSdk() {
+  const intl = useIntl();
   const site = useSiteInfo();
   const API_BASE = useApiBase();
   return (
     <>
-      <h1>SDK 接入</h1>
+      <h1>{intl.formatMessage({ id: 'docs.sdk.title' })}</h1>
       <p>
-        {site.name}兼容 OpenAI 协议,所以你可以直接使用各语言的 OpenAI 官方/社区 SDK
-        —— 不需要安装{site.name}的专属 SDK,只需要把 SDK 的 <code>base_url</code>{' '}
-        指向 <code>{API_BASE}</code> 即可。
+        {intl.formatMessage(
+          { id: 'docs.sdk.intro' },
+          { name: site.name, base: <code key="base">{API_BASE}</code> },
+        )}
       </p>
 
-      <Callout type="info" title="同样的写法适用于">
+      <Callout
+        type="info"
+        title={intl.formatMessage({ id: 'docs.sdk.appliesTitle' })}
+      >
         <ul style={{ margin: 0, paddingLeft: 18 }}>
-          <li>OpenAI 官方 SDK(Python / Node / Go / Java / .NET)</li>
-          <li>LangChain、LlamaIndex、Vercel AI SDK 等基于 OpenAI 的框架</li>
-          <li>Continue / Cline / Cursor / Cherry Studio 等支持 OpenAI 协议的客户端</li>
-          <li>任何能改 base_url 的 OpenAI 兼容工具</li>
+          <li>{intl.formatMessage({ id: 'docs.sdk.appliesOfficial' })}</li>
+          <li>{intl.formatMessage({ id: 'docs.sdk.appliesFrameworks' })}</li>
+          <li>{intl.formatMessage({ id: 'docs.sdk.appliesClients' })}</li>
+          <li>{intl.formatMessage({ id: 'docs.sdk.appliesAny' })}</li>
         </ul>
       </Callout>
 
       <h2>Python</h2>
       <p>
-        使用 OpenAI 官方 <code>openai</code> 包(<code>{'>='}1.0</code>),
-        先安装:
+        {intl.formatMessage(
+          { id: 'docs.sdk.pythonIntro' },
+          {
+            pkg: <code key="pkg">openai</code>,
+            ver: <code key="ver">{'>='}1.0</code>,
+          },
+        )}
       </p>
       <CodeBlock lang="bash" code={`pip install openai`} />
       <CodeBlock
@@ -38,14 +48,14 @@ client = OpenAI(
     base_url="${API_BASE}",
 )
 
-# 非流式
+# ${intl.formatMessage({ id: 'docs.sdk.codeNonStream' })}
 resp = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Hello"}],
 )
 print(resp.choices[0].message.content)
 
-# 流式
+# ${intl.formatMessage({ id: 'docs.sdk.codeStream' })}
 stream = client.chat.completions.create(
     model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Hello"}],
@@ -79,8 +89,8 @@ for await (const chunk of stream) {
 }`}
       />
 
-      <h2>Go / Java / 其它语言</h2>
-      <p>各家 SDK 的配置方式几乎一致 —— 改两个字段:</p>
+      <h2>{intl.formatMessage({ id: 'docs.sdk.otherLangsTitle' })}</h2>
+      <p>{intl.formatMessage({ id: 'docs.sdk.otherLangsDesc' })}</p>
 
       <TabbedCode
         snippets={[
@@ -159,19 +169,16 @@ Console.WriteLine(completion.Content[0].Text);`,
         ]}
       />
 
-      <h2>第三方客户端</h2>
-      <p>
-        几乎所有桌面 / Web 端 AI 客户端都支持「自定义 OpenAI 接口」,
-        配置三个字段就能用:
-      </p>
+      <h2>{intl.formatMessage({ id: 'docs.sdk.thirdPartyTitle' })}</h2>
+      <p>{intl.formatMessage({ id: 'docs.sdk.thirdPartyDesc' })}</p>
 
       <div className="docs-table-wrap">
         <table>
           <thead>
             <tr>
-              <th>字段</th>
-              <th>值</th>
-              <th>说明</th>
+              <th>{intl.formatMessage({ id: 'docs.sdk.colField' })}</th>
+              <th>{intl.formatMessage({ id: 'docs.sdk.colValue' })}</th>
+              <th>{intl.formatMessage({ id: 'docs.sdk.colDesc' })}</th>
             </tr>
           </thead>
           <tbody>
@@ -180,41 +187,64 @@ Console.WriteLine(completion.Content[0].Text);`,
               <td>
                 <code>{API_BASE}</code>
               </td>
-              <td>客户端里有时叫「自定义 API 地址」/「Custom URL」</td>
+              <td>{intl.formatMessage({ id: 'docs.sdk.rowBaseDesc' })}</td>
             </tr>
             <tr>
               <td>API Key</td>
               <td>
                 <code>sk-your-key</code>
               </td>
-              <td>填入{site.name}控制台生成的 Key</td>
+              <td>
+                {intl.formatMessage(
+                  { id: 'docs.sdk.rowKeyDesc' },
+                  { name: site.name },
+                )}
+              </td>
             </tr>
             <tr>
               <td>Model</td>
               <td>
-                <code>gpt-4o-mini</code> 等
+                <code>gpt-4o-mini</code>{' '}
+                {intl.formatMessage({ id: 'docs.sdk.rowModelEtc' })}
               </td>
               <td>
-                可调模型完整列表见{' '}
-                <Link to="/docs/models">模型列表</Link>
+                {intl.formatMessage(
+                  { id: 'docs.sdk.rowModelDesc' },
+                  {
+                    link: (
+                      <Link key="link" to="/docs/models">
+                        {intl.formatMessage({ id: 'docs.sdk.modelListLink' })}
+                      </Link>
+                    ),
+                  },
+                )}
               </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <Callout type="success" title="客户端示例">
+      <Callout
+        type="success"
+        title={intl.formatMessage({ id: 'docs.sdk.clientExampleTitle' })}
+      >
         <p style={{ margin: 0 }}>
-          Cherry Studio / Chatbox / Open WebUI / Cursor / Cline / Continue
-          等都已经验证可直接使用 —— 都是「OpenAI 兼容,改 base_url」。
+          {intl.formatMessage({ id: 'docs.sdk.clientExampleDesc' })}
         </p>
       </Callout>
 
-      <h2>HTTP 直调(不用 SDK)</h2>
+      <h2>{intl.formatMessage({ id: 'docs.sdk.httpTitle' })}</h2>
       <p>
-        如果你的环境装不了 SDK,直接 HTTP 也可以,参考{' '}
-        <Link to="/docs/chat">对话 Chat</Link> 页里的 curl 示例,
-        几乎任何语言的标准 HTTP 客户端都能跑。
+        {intl.formatMessage(
+          { id: 'docs.sdk.httpDesc' },
+          {
+            link: (
+              <Link key="link" to="/docs/chat">
+                {intl.formatMessage({ id: 'docs.sdk.chatLink' })}
+              </Link>
+            ),
+          },
+        )}
       </p>
     </>
   );

@@ -1,6 +1,7 @@
 // Docs 子页共用的小组件:CodeBlock(带语言标 + 复制按钮)、Callout(提示框)、
 // ApiTable(横向滚动表格)、TabbedCode(多语言代码切换)。统一在这里维护,避免每个
 // 子页都重写一份样式/复制逻辑。
+import { useIntl } from '@umijs/max';
 import { Tabs } from 'antd';
 import { useState, type ReactNode } from 'react';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
@@ -12,6 +13,7 @@ export function CodeBlock({
   lang?: string;
   code: string;
 }) {
+  const intl = useIntl();
   const [copied, setCopied] = useState(false);
   const onCopy = async () => {
     try {
@@ -30,7 +32,9 @@ export function CodeBlock({
         className={`code-block-copy${copied ? ' copied' : ''}`}
         onClick={onCopy}
       >
-        {copied ? '已复制' : '复制'}
+        {copied
+          ? intl.formatMessage({ id: 'common.copied' })
+          : intl.formatMessage({ id: 'common.copy' })}
       </button>
       <pre>
         <code>{code}</code>

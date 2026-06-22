@@ -1,90 +1,93 @@
-import { Link } from '@umijs/max';
+import { Link, useIntl } from '@umijs/max';
 import { Collapse } from 'antd';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout } from './_shared';
 
 export default function DocFaq() {
   const site = useSiteInfo();
+  const intl = useIntl();
   const items = [
     {
       key: 'q-openai-compat',
-      label: `${site.name}跟 OpenAI 是什么关系?`,
+      label: intl.formatMessage({ id: 'docs.faq.q1.label' }, { name: site.name }),
       children: (
         <p>
-          {site.name}是一个统一的 API 中转/聚合服务,自身不训练模型 ——
-          所有调用都会按你请求里的 <code>model</code> 字段转发给对应上游
-          (OpenAI、Anthropic、Google、DeepSeek、Qwen、GLM 等),
-          并把响应原样回传给你。协议层完全兼容 OpenAI,所以可以直接用 OpenAI 官方 SDK。
+          {intl.formatMessage(
+            { id: 'docs.faq.q1.p1.pre' },
+            { name: site.name },
+          )}
+          <code>model</code>
+          {intl.formatMessage({ id: 'docs.faq.q1.p1.post' })}
         </p>
       ),
     },
     {
       key: 'q-billing',
-      label: '怎么计费?为什么余额扣得跟我预期不一样?',
+      label: intl.formatMessage({ id: 'docs.faq.q2.label' }),
       children: (
         <>
           <p>
-            按本次请求的 token 用量 ×{' '}
-            <Link to="/#pricing">定价</Link>{' '}
-            里展示的输入价 / 输出价之和扣款。token 数以上游返回的{' '}
-            <code>usage</code> 为准,会在响应体里看到。
+            {intl.formatMessage({ id: 'docs.faq.q2.p1.pre' })}
+            <Link to="/models">
+              {intl.formatMessage({ id: 'docs.faq.q2.p1.modelMarket' })}
+            </Link>{' '}
+            {intl.formatMessage({ id: 'docs.faq.q2.p1.mid' })}
+            <code>usage</code>
+            {intl.formatMessage({ id: 'docs.faq.q2.p1.post' })}
           </p>
-          <p>常见的「扣多扣少」原因:</p>
+          <p>{intl.formatMessage({ id: 'docs.faq.q2.reasonsTitle' })}</p>
           <ul>
-            <li>请求里 system / 多轮历史 / few-shot 例子都算输入 token。</li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q2.reason1' })}</li>
             <li>
-              开启 <code>stream</code> 后,输入按提示词全部计算,输出按实际生成长度。
+              {intl.formatMessage({ id: 'docs.faq.q2.reason2.pre' })}
+              <code>stream</code>
+              {intl.formatMessage({ id: 'docs.faq.q2.reason2.post' })}
             </li>
-            <li>
-              你的用户分组可能配置了倍率(例如 1.2x),实际扣款 = 定价 × 倍率。
-            </li>
-            <li>
-              管理员可能为某条渠道覆盖了价格,以「实际扣款」为准。
-            </li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q2.reason3' })}</li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q2.reason4' })}</li>
           </ul>
           <p>
-            想看本次请求的实际扣款,请到{' '}
-            <Link to="/console/logs/usage">控制台 → 日志</Link>。
+            {intl.formatMessage({ id: 'docs.faq.q2.seeActual.pre' })}
+            <Link to="/console/logs/usage">
+              {intl.formatMessage({ id: 'docs.faq.q2.seeActual.link' })}
+            </Link>
+            {intl.formatMessage({ id: 'docs.faq.q2.seeActual.post' })}
           </p>
         </>
       ),
     },
     {
       key: 'q-data',
-      label: '我的对话数据会被存下来吗?会被用于训练吗?',
+      label: intl.formatMessage({ id: 'docs.faq.q3.label' }),
       children: (
         <>
           <p>
-            {site.name}会在「日志」中保留请求/响应的元数据(请求 ID、模型 ID、token 用量、
-            状态码、耗时等)用于计费与排障;请求体 / 响应体明文是否落库取决于
-            管理员配置,可按账户级别开关。
+            {intl.formatMessage({ id: 'docs.faq.q3.p1' }, { name: site.name })}
           </p>
-          <p>
-            上游厂商对训练数据的政策由它们自己决定 —— 例如 OpenAI 走 API 的请求
-            默认不被用于训练,而部分国产厂商默认会用于模型改进,接入前请阅读
-            对应上游的隐私政策。
-          </p>
+          <p>{intl.formatMessage({ id: 'docs.faq.q3.p2' })}</p>
         </>
       ),
     },
     {
       key: 'q-streaming-cut',
-      label: '流式响应中途断开了,会被扣费吗?',
+      label: intl.formatMessage({ id: 'docs.faq.q4.label' }),
       children: (
         <>
           <p>
-            会。SSE 是长连接,客户端断开后{site.name}仍会等待上游把当前 token 流跑完,
-            按上游返回的最终 <code>usage</code> 扣费 —— 这是为了和上游的实际计费保持一致。
+            {intl.formatMessage(
+              { id: 'docs.faq.q4.p1.pre' },
+              { name: site.name },
+            )}
+            <code>usage</code>
+            {intl.formatMessage({ id: 'docs.faq.q4.p1.post' })}
           </p>
-          <p>
-            如果你的业务需要支持「取消」,推荐:
-          </p>
+          <p>{intl.formatMessage({ id: 'docs.faq.q4.p2' })}</p>
           <ul>
+            <li>{intl.formatMessage({ id: 'docs.faq.q4.tip1' })}</li>
             <li>
-              客户端层面立刻停止读取流,UX 上当作"取消"即可。
-            </li>
-            <li>
-              控制成本的关键是 <code>max_tokens</code> —— 它能限制单次输出上限。
+              {intl.formatMessage({ id: 'docs.faq.q4.tip2.pre' })}
+              <code>max_tokens</code>
+              {intl.formatMessage({ id: 'docs.faq.q4.tip2.post' })}
             </li>
           </ul>
         </>
@@ -92,74 +95,79 @@ export default function DocFaq() {
     },
     {
       key: 'q-region',
-      label: '不同地区的网络问题怎么办?',
+      label: intl.formatMessage({ id: 'docs.faq.q5.label' }),
       children: (
         <p>
-          {site.name}在出口侧已对接多个上游线路,理论上你只需要保证从你的客户端
-          能稳定连到{site.name}本身即可。如果在国内访问海外模型(OpenAI / Anthropic)
-          出现高延迟,推荐:在国内云上部署你的业务,通过国内出口访问{site.name}。
+          {intl.formatMessage({ id: 'docs.faq.q5.p1' }, { name: site.name })}
         </p>
       ),
     },
     {
       key: 'q-supports',
-      label: '支持函数调用 / Tool Use / JSON 模式吗?',
+      label: intl.formatMessage({ id: 'docs.faq.q6.label' }),
       children: (
         <>
           <p>
-            支持。<code>tools</code> / <code>tool_choice</code> /{' '}
-            <code>response_format</code> 字段全部按 OpenAI 协议透传,
-            上游模型支持就直接生效。常见组合:
+            {intl.formatMessage({ id: 'docs.faq.q6.p1.pre' })}
+            <code>tools</code> / <code>tool_choice</code> /{' '}
+            <code>response_format</code>
+            {intl.formatMessage({ id: 'docs.faq.q6.p1.post' })}
           </p>
           <ul>
             <li>
-              OpenAI <code>gpt-4o</code> 系列 —— 完整支持 tools + JSON 模式。
+              {intl.formatMessage({ id: 'docs.faq.q6.combo1.pre' })}
+              <code>gpt-4o</code>
+              {intl.formatMessage({ id: 'docs.faq.q6.combo1.post' })}
             </li>
-            <li>
-              Anthropic Claude 3 系列 —— 完整支持 tools(经过协议适配)。
-            </li>
-            <li>
-              DeepSeek / Qwen / GLM 主力模型 —— 大多支持 tools,具体看上游模型卡。
-            </li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q6.combo2' })}</li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q6.combo3' })}</li>
           </ul>
         </>
       ),
     },
     {
       key: 'q-org',
-      label: '能开发票 / 企业账户吗?',
+      label: intl.formatMessage({ id: 'docs.faq.q7.label' }),
       children: (
         <p>
-          可以。请到{' '}
-          <Link to="/console/billing/records">控制台 → 账单</Link>{' '}
-          页申请发票,或在{' '}
-          <Link to="/console/settings">个人设置</Link>{' '}
-          中切换为企业账户。如需团队成员协作、SSO、按部门分账等高级特性,
-          请联系管理员申请企业版。
+          {intl.formatMessage({ id: 'docs.faq.q7.p1.pre' })}
+          <Link to="/console/billing/invoices">
+            {intl.formatMessage({ id: 'docs.faq.q7.p1.invoices' })}
+          </Link>{' '}
+          {intl.formatMessage({ id: 'docs.faq.q7.p1.mid' })}
+          <Link to="/console/settings">
+            {intl.formatMessage({ id: 'docs.faq.q7.p1.settings' })}
+          </Link>{' '}
+          {intl.formatMessage({ id: 'docs.faq.q7.p1.post' })}
         </p>
       ),
     },
     {
       key: 'q-incident',
-      label: `请求一直失败 / 怀疑${site.name}侧故障,怎么办?`,
+      label: intl.formatMessage({ id: 'docs.faq.q8.label' }, { name: site.name }),
       children: (
         <>
-          <p>排查顺序:</p>
+          <p>{intl.formatMessage({ id: 'docs.faq.q8.orderTitle' })}</p>
           <ol>
             <li>
-              先看返回的 HTTP 状态码与错误 message,对照{' '}
-              <Link to="/docs/errors">错误码</Link>。
+              {intl.formatMessage({ id: 'docs.faq.q8.step1.pre' })}
+              <Link to="/docs/errors">
+                {intl.formatMessage({ id: 'docs.faq.q8.step1.link' })}
+              </Link>
+              {intl.formatMessage({ id: 'docs.faq.q8.step1.post' })}
             </li>
             <li>
-              到{' '}
-              <Link to="/console/logs/usage">控制台 → 日志</Link>{' '}
-              查最近的请求,如果有响应体可以看上游原文。
+              {intl.formatMessage({ id: 'docs.faq.q8.step2.pre' })}
+              <Link to="/console/logs/usage">
+                {intl.formatMessage({ id: 'docs.faq.q8.step2.link' })}
+              </Link>{' '}
+              {intl.formatMessage({ id: 'docs.faq.q8.step2.post' })}
             </li>
+            <li>{intl.formatMessage({ id: 'docs.faq.q8.step3' })}</li>
             <li>
-              换一个同类型模型试一下 —— 排除单一上游问题。
-            </li>
-            <li>
-              仍无法解决,把响应里的 <code>id</code> 发给管理员/客服。
+              {intl.formatMessage({ id: 'docs.faq.q8.step4.pre' })}
+              <code>id</code>
+              {intl.formatMessage({ id: 'docs.faq.q8.step4.post' })}
             </li>
           </ol>
         </>
@@ -169,8 +177,8 @@ export default function DocFaq() {
 
   return (
     <>
-      <h1>常见问题</h1>
-      <p>把高频问题整理在一起,先在这里找一遍,再去翻其它文档。</p>
+      <h1>{intl.formatMessage({ id: 'docs.faq.title' })}</h1>
+      <p>{intl.formatMessage({ id: 'docs.faq.intro' })}</p>
 
       <Collapse
         items={items}
@@ -179,13 +187,24 @@ export default function DocFaq() {
         style={{ background: 'transparent', marginTop: 20 }}
       />
 
-      <Callout type="info" title="没找到答案?">
+      <Callout
+        type="info"
+        title={intl.formatMessage({ id: 'docs.faq.noAnswer.title' })}
+      >
         <p style={{ margin: 0 }}>
-          可以先翻{' '}
-          <Link to="/docs/quick-start">快速开始</Link>、
-          <Link to="/docs/errors">错误码</Link>{' '}
-          ;若是计费/账户问题,到{' '}
-          <Link to="/console/billing/records">账单</Link> 或联系管理员。
+          {intl.formatMessage({ id: 'docs.faq.noAnswer.pre' })}
+          <Link to="/docs/quick-start">
+            {intl.formatMessage({ id: 'docs.faq.noAnswer.quickStart' })}
+          </Link>
+          {intl.formatMessage({ id: 'docs.faq.noAnswer.mid1' })}
+          <Link to="/docs/errors">
+            {intl.formatMessage({ id: 'docs.faq.noAnswer.errors' })}
+          </Link>{' '}
+          {intl.formatMessage({ id: 'docs.faq.noAnswer.mid2' })}
+          <Link to="/console/billing/records">
+            {intl.formatMessage({ id: 'docs.faq.noAnswer.records' })}
+          </Link>{' '}
+          {intl.formatMessage({ id: 'docs.faq.noAnswer.post' })}
         </p>
       </Callout>
     </>

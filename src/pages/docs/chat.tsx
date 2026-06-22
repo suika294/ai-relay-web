@@ -1,58 +1,74 @@
-import { Link } from '@umijs/max';
+import { Link, useIntl } from '@umijs/max';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { Callout, CodeBlock, useApiBase } from './_shared';
 
 export default function DocChat() {
   const site = useSiteInfo();
   const API_BASE = useApiBase();
+  const intl = useIntl();
   return (
     <>
-      <h1>对话 Chat Completions</h1>
+      <h1>{intl.formatMessage({ id: 'docs.chat.title' })}</h1>
       <p>
-        {site.name}最核心的接口,行为与 OpenAI{' '}
-        <code>/v1/chat/completions</code> 完全一致。所有上游厂商
-        (Anthropic / Gemini / DeepSeek / Qwen / GLM ...)的对话能力都通过
-        这个接口统一暴露。
+        {intl.formatMessage(
+          { id: 'docs.chat.intro1' },
+          { name: site.name },
+        )}{' '}
+        <code>/v1/chat/completions</code>{' '}
+        {intl.formatMessage({ id: 'docs.chat.intro2' })}
       </p>
 
-      <h2>请求</h2>
+      <h2>{intl.formatMessage({ id: 'docs.chat.requestHeading' })}</h2>
       <p>
         <code>POST {API_BASE}/chat/completions</code>
       </p>
 
-      <h3>请求体字段</h3>
+      <h3>{intl.formatMessage({ id: 'docs.chat.bodyFieldsHeading' })}</h3>
       <div className="docs-table-wrap">
         <table>
           <thead>
             <tr>
-              <th style={{ width: 180 }}>字段</th>
-              <th style={{ width: 100 }}>类型</th>
-              <th>说明</th>
+              <th style={{ width: 180 }}>
+                {intl.formatMessage({ id: 'docs.chat.colField' })}
+              </th>
+              <th style={{ width: 100 }}>
+                {intl.formatMessage({ id: 'docs.chat.colType' })}
+              </th>
+              <th>{intl.formatMessage({ id: 'docs.chat.colDesc' })}</th>
             </tr>
           </thead>
           <tbody>
             <tr>
               <td>
                 <code>model</code>
-                <div style={{ color: '#999', fontSize: 12 }}>必填</div>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  {intl.formatMessage({ id: 'docs.chat.required' })}
+                </div>
               </td>
               <td>string</td>
               <td>
-                模型 ID,例如 <code>gpt-4o-mini</code>、
-                <code>claude-3-5-sonnet</code>、<code>deepseek-chat</code>。
-                完整列表见{' '}
-                <Link to="/docs/models">模型列表</Link>。
+                {intl.formatMessage({ id: 'docs.chat.fieldModel1' })}{' '}
+                <code>gpt-4o-mini</code>、<code>claude-3-5-sonnet</code>、
+                <code>deepseek-chat</code>。
+                {intl.formatMessage({ id: 'docs.chat.fieldModel2' })}{' '}
+                <Link to="/docs/models">
+                  {intl.formatMessage({ id: 'docs.chat.modelListLink' })}
+                </Link>
+                。
               </td>
             </tr>
             <tr>
               <td>
                 <code>messages</code>
-                <div style={{ color: '#999', fontSize: 12 }}>必填</div>
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  {intl.formatMessage({ id: 'docs.chat.required' })}
+                </div>
               </td>
               <td>array</td>
               <td>
-                按对话顺序排列的消息数组,每条形如
-                <code>{'{role, content}'}</code>。role 取值见下方说明。
+                {intl.formatMessage({ id: 'docs.chat.fieldMessages1' })}
+                <code>{'{role, content}'}</code>。
+                {intl.formatMessage({ id: 'docs.chat.fieldMessages2' })}
               </td>
             </tr>
             <tr>
@@ -61,9 +77,13 @@ export default function DocChat() {
               </td>
               <td>boolean</td>
               <td>
-                是否使用流式 SSE 返回,默认 <code>false</code>。开启后请按{' '}
-                <Link to="/docs/streaming">流式响应</Link>{' '}
-                里的方式解析。
+                {intl.formatMessage({ id: 'docs.chat.fieldStream1' })}{' '}
+                <code>false</code>
+                {intl.formatMessage({ id: 'docs.chat.fieldStream2' })}{' '}
+                <Link to="/docs/streaming">
+                  {intl.formatMessage({ id: 'docs.chat.streamingLink' })}
+                </Link>{' '}
+                {intl.formatMessage({ id: 'docs.chat.fieldStream3' })}
               </td>
             </tr>
             <tr>
@@ -72,7 +92,9 @@ export default function DocChat() {
               </td>
               <td>number</td>
               <td>
-                采样温度,<code>0 ~ 2</code>。值越高输出越随机,需要稳定结果传 0。
+                {intl.formatMessage({ id: 'docs.chat.fieldTemperature1' })}
+                <code>0 ~ 2</code>
+                {intl.formatMessage({ id: 'docs.chat.fieldTemperature2' })}
               </td>
             </tr>
             <tr>
@@ -81,7 +103,9 @@ export default function DocChat() {
               </td>
               <td>number</td>
               <td>
-                核采样阈值,<code>0 ~ 1</code>。一般与 temperature 二选一使用。
+                {intl.formatMessage({ id: 'docs.chat.fieldTopP1' })}
+                <code>0 ~ 1</code>
+                {intl.formatMessage({ id: 'docs.chat.fieldTopP2' })}
               </td>
             </tr>
             <tr>
@@ -89,16 +113,14 @@ export default function DocChat() {
                 <code>max_tokens</code>
               </td>
               <td>integer</td>
-              <td>本次回复最多生成的 token 数。不传则使用模型默认值。</td>
+              <td>{intl.formatMessage({ id: 'docs.chat.fieldMaxTokens' })}</td>
             </tr>
             <tr>
               <td>
                 <code>stop</code>
               </td>
               <td>string / array</td>
-              <td>
-                遇到这些字符串则提前停止生成,最多 4 个。
-              </td>
+              <td>{intl.formatMessage({ id: 'docs.chat.fieldStop' })}</td>
             </tr>
             <tr>
               <td>
@@ -106,7 +128,8 @@ export default function DocChat() {
               </td>
               <td>number</td>
               <td>
-                <code>-2 ~ 2</code>,正值鼓励模型谈论新话题。
+                <code>-2 ~ 2</code>
+                {intl.formatMessage({ id: 'docs.chat.fieldPresencePenalty' })}
               </td>
             </tr>
             <tr>
@@ -115,7 +138,8 @@ export default function DocChat() {
               </td>
               <td>number</td>
               <td>
-                <code>-2 ~ 2</code>,正值降低重复用词倾向。
+                <code>-2 ~ 2</code>
+                {intl.formatMessage({ id: 'docs.chat.fieldFrequencyPenalty' })}
               </td>
             </tr>
             <tr>
@@ -124,9 +148,11 @@ export default function DocChat() {
               </td>
               <td>array</td>
               <td>
-                工具调用(Function Calling)定义,具体格式与 OpenAI
-                官方文档相同。仅部分模型支持,详见{' '}
-                <Link to="/docs/models">模型列表</Link>。
+                {intl.formatMessage({ id: 'docs.chat.fieldTools1' })}{' '}
+                <Link to="/docs/models">
+                  {intl.formatMessage({ id: 'docs.chat.modelListLink' })}
+                </Link>
+                。
               </td>
             </tr>
             <tr>
@@ -135,7 +161,9 @@ export default function DocChat() {
               </td>
               <td>string / object</td>
               <td>
-                控制是否调用工具:<code>auto</code> / <code>none</code> / 指定工具。
+                {intl.formatMessage({ id: 'docs.chat.fieldToolChoice' })}
+                <code>auto</code> / <code>none</code> /{' '}
+                {intl.formatMessage({ id: 'docs.chat.fieldToolChoiceSpecify' })}
               </td>
             </tr>
             <tr>
@@ -145,7 +173,7 @@ export default function DocChat() {
               <td>object</td>
               <td>
                 <code>{'{ type: "json_object" }'}</code>{' '}
-                强制 JSON 输出,仅部分模型支持。
+                {intl.formatMessage({ id: 'docs.chat.fieldResponseFormat' })}
               </td>
             </tr>
             <tr>
@@ -153,37 +181,44 @@ export default function DocChat() {
                 <code>user</code>
               </td>
               <td>string</td>
-              <td>
-                你侧的最终用户标识,会原样透传到上游,便于风控与审计。
-              </td>
+              <td>{intl.formatMessage({ id: 'docs.chat.fieldUser' })}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <h3>messages 数组中的 role</h3>
+      <h3>{intl.formatMessage({ id: 'docs.chat.rolesHeading' })}</h3>
       <ul>
         <li>
-          <code>system</code> —— 系统提示词,放在数组首位,用于设定角色、风格、约束。
+          <code>system</code> ——{' '}
+          {intl.formatMessage({ id: 'docs.chat.roleSystem' })}
         </li>
         <li>
-          <code>user</code> —— 用户当前发言。
+          <code>user</code> —— {intl.formatMessage({ id: 'docs.chat.roleUser' })}
         </li>
         <li>
-          <code>assistant</code> —— 模型上一轮回复,多轮对话时把它原样拼回去。
+          <code>assistant</code> ——{' '}
+          {intl.formatMessage({ id: 'docs.chat.roleAssistant' })}
         </li>
         <li>
-          <code>tool</code> —— 工具调用的执行结果,需要带上对应的{' '}
+          <code>tool</code> —— {intl.formatMessage({ id: 'docs.chat.roleTool1' })}
           <code>tool_call_id</code>。
         </li>
       </ul>
 
-      <h2 id="vision">图片输入 (Vision)</h2>
+      <h2 id="vision">{intl.formatMessage({ id: 'docs.chat.visionHeading' })}</h2>
       <p>
-        支持视觉理解的模型(GPT-4o / Claude 3.5 Sonnet / Gemini 1.5+ / Qwen-VL 等)可在
-        <code>messages[].content</code> 里以 <strong>数组</strong> 形式混合文字 + 图片。
-        语法与 OpenAI 完全一致,图片可以传 <strong>HTTP URL</strong>{' '}
-        或 <strong>data URL (base64 内联)</strong>。
+        {intl.formatMessage({ id: 'docs.chat.vision1' })}
+        <code>messages[].content</code>{' '}
+        {intl.formatMessage({ id: 'docs.chat.vision2' })}{' '}
+        <strong>{intl.formatMessage({ id: 'docs.chat.visionArray' })}</strong>{' '}
+        {intl.formatMessage({ id: 'docs.chat.vision3' })}{' '}
+        <strong>HTTP URL</strong>{' '}
+        {intl.formatMessage({ id: 'docs.chat.visionOr' })}{' '}
+        <strong>
+          {intl.formatMessage({ id: 'docs.chat.visionDataUrl' })}
+        </strong>
+        。
       </p>
       <CodeBlock
         lang="json"
@@ -193,7 +228,7 @@ export default function DocChat() {
     {
       "role": "user",
       "content": [
-        { "type": "text", "text": "这张图里有什么?" },
+        { "type": "text", "text": "${intl.formatMessage({ id: 'docs.chat.exVisionPrompt' })}" },
         {
           "type": "image_url",
           "image_url": {
@@ -210,7 +245,7 @@ export default function DocChat() {
         code={`{
   "role": "user",
   "content": [
-    { "type": "text", "text": "帮我读一下这张截图里的中文" },
+    { "type": "text", "text": "${intl.formatMessage({ id: 'docs.chat.exVisionOcrPrompt' })}" },
     {
       "type": "image_url",
       "image_url": {
@@ -222,24 +257,37 @@ export default function DocChat() {
       />
       <ul>
         <li>
-          <strong>URL 与 base64 二选一</strong>:URL 必须公网可达(上游会自行下载);
-          base64 适合本地文件 / 隐私图片,但单图建议 ≤ 4MB,超过容易 413 / 超时。
+          <strong>
+            {intl.formatMessage({ id: 'docs.chat.visionUrlOrBase64' })}
+          </strong>
+          {intl.formatMessage({ id: 'docs.chat.visionUrlOrBase64Desc' })}
         </li>
         <li>
-          <strong>多图</strong>:一个 <code>messages[]</code> 里可以塞多张图;一些模型
-          会对总像素 / 总张数有上限,详见上游官方文档。
+          <strong>{intl.formatMessage({ id: 'docs.chat.visionMulti' })}</strong>
+          {intl.formatMessage({ id: 'docs.chat.visionMultiDesc1' })}
+          <code>messages[]</code>
+          {intl.formatMessage({ id: 'docs.chat.visionMultiDesc2' })}
         </li>
         <li>
-          <strong>计费</strong>:图片输入会按"image_input tokens"单独计费,与文本 token
-          分开记录在 <code>usage</code> 里。
+          <strong>
+            {intl.formatMessage({ id: 'docs.chat.visionBilling' })}
+          </strong>
+          {intl.formatMessage({ id: 'docs.chat.visionBillingDesc1' })}
+          <code>usage</code>
+          {intl.formatMessage({ id: 'docs.chat.visionBillingDesc2' })}
         </li>
         <li>
-          需要"图像生成 / 图生图"的请走 <Link to="/docs/images">图像生成</Link> 接口
-          (<code>/v1/images/generations</code>),不要在 chat 里要求模型"生成一张图"。
+          {intl.formatMessage({ id: 'docs.chat.visionImageGen1' })}{' '}
+          <Link to="/docs/images">
+            {intl.formatMessage({ id: 'docs.chat.imageGenLink' })}
+          </Link>{' '}
+          {intl.formatMessage({ id: 'docs.chat.visionImageGen2' })}
+          (<code>/v1/images/generations</code>)
+          {intl.formatMessage({ id: 'docs.chat.visionImageGen3' })}
         </li>
       </ul>
 
-      <h2>请求示例</h2>
+      <h2>{intl.formatMessage({ id: 'docs.chat.requestExampleHeading' })}</h2>
       <CodeBlock
         lang="bash"
         code={`curl ${API_BASE}/chat/completions \\
@@ -248,18 +296,16 @@ export default function DocChat() {
   -d '{
     "model": "gpt-4o-mini",
     "messages": [
-      {"role": "system", "content": "你是一名 SQL 工程师"},
-      {"role": "user", "content": "把 users 表里最近 7 天注册的用户挑出来"}
+      {"role": "system", "content": "${intl.formatMessage({ id: 'docs.chat.exSystemPrompt' })}"},
+      {"role": "user", "content": "${intl.formatMessage({ id: 'docs.chat.exUserPrompt' })}"}
     ],
     "temperature": 0.2,
     "max_tokens": 256
   }'`}
       />
 
-      <h2>响应</h2>
-      <p>
-        非流式调用一次性返回完整对象,字段与 OpenAI 一致;字段含义对照表:
-      </p>
+      <h2>{intl.formatMessage({ id: 'docs.chat.responseHeading' })}</h2>
+      <p>{intl.formatMessage({ id: 'docs.chat.responseIntro' })}</p>
       <CodeBlock
         lang="json"
         code={`{
@@ -289,8 +335,10 @@ export default function DocChat() {
         <table>
           <thead>
             <tr>
-              <th style={{ width: 220 }}>字段</th>
-              <th>含义</th>
+              <th style={{ width: 220 }}>
+                {intl.formatMessage({ id: 'docs.chat.colField' })}
+              </th>
+              <th>{intl.formatMessage({ id: 'docs.chat.colMeaning' })}</th>
             </tr>
           </thead>
           <tbody>
@@ -298,52 +346,65 @@ export default function DocChat() {
               <td>
                 <code>id</code>
               </td>
-              <td>本次调用的唯一 ID,排查问题时把它发给客服可以快速定位。</td>
+              <td>{intl.formatMessage({ id: 'docs.chat.respId' })}</td>
             </tr>
             <tr>
               <td>
                 <code>model</code>
               </td>
-              <td>实际命中的模型 ID(可能与请求传入的略有差异,例如版本对齐)。</td>
+              <td>{intl.formatMessage({ id: 'docs.chat.respModel' })}</td>
             </tr>
             <tr>
               <td>
                 <code>choices[].message.content</code>
               </td>
-              <td>模型生成的最终文本。</td>
+              <td>{intl.formatMessage({ id: 'docs.chat.respContent' })}</td>
             </tr>
             <tr>
               <td>
                 <code>choices[].finish_reason</code>
               </td>
               <td>
-                结束原因:<code>stop</code>(正常)/{' '}
-                <code>length</code>(触发 max_tokens)/{' '}
-                <code>tool_calls</code>(需调用工具)/{' '}
-                <code>content_filter</code>(命中安全)。
+                {intl.formatMessage({ id: 'docs.chat.respFinishReason' })}
+                <code>stop</code>
+                {intl.formatMessage({ id: 'docs.chat.respFinishStop' })}/{' '}
+                <code>length</code>
+                {intl.formatMessage({ id: 'docs.chat.respFinishLength' })}/{' '}
+                <code>tool_calls</code>
+                {intl.formatMessage({ id: 'docs.chat.respFinishToolCalls' })}/{' '}
+                <code>content_filter</code>
+                {intl.formatMessage({ id: 'docs.chat.respFinishContentFilter' })}
               </td>
             </tr>
             <tr>
               <td>
                 <code>usage.prompt_tokens</code>
               </td>
-              <td>请求消耗的输入 token 数,用于按输入价计费。</td>
+              <td>{intl.formatMessage({ id: 'docs.chat.respPromptTokens' })}</td>
             </tr>
             <tr>
               <td>
                 <code>usage.completion_tokens</code>
               </td>
-              <td>响应消耗的输出 token 数,用于按输出价计费。</td>
+              <td>
+                {intl.formatMessage({ id: 'docs.chat.respCompletionTokens' })}
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <Callout type="info" title="多轮对话">
+      <Callout
+        type="info"
+        title={intl.formatMessage({ id: 'docs.chat.multiTurnTitle' })}
+      >
         <p style={{ margin: 0 }}>
-          {site.name}本身不存对话历史 —— 每次请求都把完整 <code>messages</code>{' '}
-          发过来,服务端不会自动拼接。所以历史轮数由你侧维护,
-          太长可以截断或本地做摘要再发。
+          {intl.formatMessage(
+            { id: 'docs.chat.multiTurn1' },
+            { name: site.name },
+          )}{' '}
+          <code>messages</code>{' '}
+          {intl.formatMessage({ id: 'docs.chat.multiTurn2' })}
         </p>
       </Callout>
     </>
