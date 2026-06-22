@@ -1,5 +1,5 @@
 import { HomeOutlined, LogoutOutlined, SettingOutlined } from '@ant-design/icons';
-import { history, useModel } from '@umijs/max';
+import { history, useIntl, useModel } from '@umijs/max';
 import { Dropdown, type MenuProps } from 'antd';
 import type { ReactNode } from 'react';
 
@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
  *   - 退出登录 → 清 token + initialState + 跳 /
  */
 export default function UserMenu({ children }: { children: ReactNode }) {
+  const intl = useIntl();
   const { setInitialState } = useModel('@@initialState');
 
   const logout = async () => {
@@ -22,20 +23,20 @@ export default function UserMenu({ children }: { children: ReactNode }) {
     {
       key: 'home',
       icon: <HomeOutlined />,
-      label: '返回首页',
+      label: intl.formatMessage({ id: 'layout.userMenu.home' }),
       onClick: () => history.push('/'),
     },
     {
       key: 'settings',
       icon: <SettingOutlined />,
-      label: '个人设置',
+      label: intl.formatMessage({ id: 'layout.userMenu.settings' }),
       onClick: () => history.push('/console/settings'),
     },
     { type: 'divider' },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: intl.formatMessage({ id: 'layout.userMenu.logout' }),
       danger: true,
       onClick: logout,
     },

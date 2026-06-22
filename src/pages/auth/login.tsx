@@ -1,4 +1,4 @@
-import { history, Link, useSearchParams } from '@umijs/max';
+import { history, Link, useIntl, useSearchParams } from '@umijs/max';
 import { Button, Result } from 'antd';
 import { useEffect } from 'react';
 import { useAuthModal } from '@/components/AuthModalProvider';
@@ -14,6 +14,7 @@ export default function Login() {
 }
 
 function LoginContent() {
+  const intl = useIntl();
   const [params] = useSearchParams();
   const { openAuthModal } = useAuthModal();
   const target = safeRedirect(params.get('redirect'));
@@ -28,8 +29,8 @@ function LoginContent() {
   return (
     <Result
       status="info"
-      title="请在弹窗中登录"
-      subTitle="产品登录入口已调整为弹窗形式。"
+      title={intl.formatMessage({ id: 'auth.page.login.title' })}
+      subTitle={intl.formatMessage({ id: 'auth.page.login.subTitle' })}
       extra={[
         <Button
           key="login"
@@ -41,10 +42,10 @@ function LoginContent() {
             })
           }
         >
-          打开登录弹窗
+          {intl.formatMessage({ id: 'auth.page.login.openLoginModalBtn' })}
         </Button>,
         <Link key="home" to="/">
-          返回首页
+          {intl.formatMessage({ id: 'auth.page.login.backHome' })}
         </Link>,
       ]}
       style={{ padding: '96px 24px' }}

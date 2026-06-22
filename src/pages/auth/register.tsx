@@ -1,4 +1,4 @@
-import { history, Link, useSearchParams } from '@umijs/max';
+import { history, Link, useIntl, useSearchParams } from '@umijs/max';
 import { Button, Result } from 'antd';
 import { useEffect } from 'react';
 import { useAuthModal } from '@/components/AuthModalProvider';
@@ -15,6 +15,7 @@ export default function Register() {
 }
 
 function RegisterContent() {
+  const intl = useIntl();
   const [params] = useSearchParams();
   const site = useSiteInfo();
   const { openAuthModal } = useAuthModal();
@@ -32,8 +33,11 @@ function RegisterContent() {
     return (
       <Result
         status="info"
-        title="注册暂未开放"
-        subTitle={`${site.name} 当前关闭了新用户自助注册,如需账号请联系管理员。`}
+        title={intl.formatMessage({ id: 'auth.page.register.closedTitle' })}
+        subTitle={intl.formatMessage(
+          { id: 'auth.page.register.closedSubTitle' },
+          { name: site.name },
+        )}
         extra={[
           <Button
             key="login"
@@ -45,10 +49,10 @@ function RegisterContent() {
               })
             }
           >
-            去登录
+            {intl.formatMessage({ id: 'auth.page.register.goLoginBtn' })}
           </Button>,
           <Link key="home" to="/">
-            返回首页
+            {intl.formatMessage({ id: 'auth.page.register.backHomeBtn' })}
           </Link>,
         ]}
         style={{ padding: '96px 24px' }}
@@ -59,8 +63,8 @@ function RegisterContent() {
   return (
     <Result
       status="info"
-      title="请在弹窗中注册"
-      subTitle="产品注册入口已调整为弹窗形式。"
+      title={intl.formatMessage({ id: 'auth.page.register.modalTitle' })}
+      subTitle={intl.formatMessage({ id: 'auth.page.register.modalSubTitle' })}
       extra={[
         <Button
           key="register"
@@ -72,10 +76,10 @@ function RegisterContent() {
             })
           }
         >
-          打开注册弹窗
+          {intl.formatMessage({ id: 'auth.page.register.openModalBtn' })}
         </Button>,
         <Link key="home" to="/">
-          返回首页
+          {intl.formatMessage({ id: 'auth.page.register.backHomeBtn' })}
         </Link>,
       ]}
       style={{ padding: '96px 24px' }}

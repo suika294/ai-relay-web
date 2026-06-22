@@ -1,10 +1,23 @@
-import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons';
-import { useModel } from '@umijs/max';
-import { Button, Form, Input, message, Modal } from 'antd';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { LockOutlined, MailOutlined, MobileOutlined, SafetyOutlined, UserOutlined } from '@ant-design/icons';
+import { history, useIntl, useModel } from '@umijs/max';
+import { Button, Form, Input, message, Modal, Segmented, Space } from 'antd';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useSiteInfo } from '@/hooks/useSiteInfo';
 import { authApi } from '@/services/api';
 import './AuthModal.css';
+
+const PHONE_RE = /^1[3-9]\d{9}$/;
+
+// 全角转半角 + 去空白:中文输入法下打出的全角数字/空格(如 １３７…、全角空格)看着和半角
+// 一模一样,却过不了上面的正则,会被误判成"格式不正确"。输入时先归一化,避免这种假报错。
+const toHalfWidth = (s: string) =>
+  s
+    .replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/　/g, ' ');
+// 手机号只可能是数字:先全角转半角,再剥掉一切非数字字符(空格、零宽字符、连字符等),
+// 彻底避免"看着对却含隐藏字符"导致的格式误判。
+const normalizePhone = (s: unknown) => toHalfWidth(String(s ?? '')).replace(/\D/g, '');
+const normalizeEmail = (s: unknown) => toHalfWidth(String(s ?? '')).trim();
 
 type Props = {
   open: boolean;
@@ -28,6 +41,8 @@ export default function AuthModal({
   description,
 }: Props) {
   const { setInitialState } = useModel('@@initialState');
+  const intl = useIntl();
+  const t = (id: string, values?: Record<string, any>) => intl.formatMessage({ id }, values);
   const site = useSiteInfo();
   const [tab, setTab] = useState<'login' | 'register'>(defaultTab);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -40,16 +55,59 @@ export default function AuthModal({
   const activeTabIndex = activeTab === 'register' ? 1 : 0;
   const logoSrc = site.logo || '/moqiao-logo-black.png';
 
+  // 验证码渠道:邮箱/短信。注册时是否需要验证码取决于站点开关。
+  const emailEnabled = !!site.email_verify_enabled;
+  const smsEnabled = !!site.sms_enabled;
+  const verifyRequired = emailEnabled || smsEnabled;
+  const bothChannels = emailEnabled && smsEnabled;
+  const [regChannel, setRegChannel] = useState<'email' | 'sms'>(
+    smsEnabled && !emailEnabled ? 'sms' : 'email',
+  );
+
+  // 发送验证码 60s 倒计时。
+  const [countdown, setCountdown] = useState(0);
+  const [sending, setSending] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startCountdown = (n = 60) => {
+    setCountdown(n);
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
+  useEffect(() => () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
+
+  // 登录二次验证(登录验证码)步骤态。
+  const [otpStep, setOtpStep] = useState(false);
+  const [otpInfo, setOtpInfo] = useState<{ temp_token: string; target_masked?: string }>({
+    temp_token: '',
+  });
+  const [otpForm] = Form.useForm();
+  const [otpLoading, setOtpLoading] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     setTab(defaultTab === 'register' && !site.register_enabled ? 'login' : defaultTab);
-  }, [defaultTab, open, site.register_enabled]);
+    setOtpStep(false);
+    setRegChannel(smsEnabled && !emailEnabled ? 'sms' : 'email');
+  }, [defaultTab, open, site.register_enabled, smsEnabled, emailEnabled]);
 
   const applyLoginResult = async (token: string, refresh: string | undefined, user: API.User) => {
     localStorage.setItem('token', token);
     if (refresh) localStorage.setItem('refresh_token', refresh);
-    await setInitialState((s: any) => ({ ...s, currentUser: user }));
+    // 先关弹窗,再灌 initialState:这样后续因 currentUser 落上引发的
+    // 重渲染(LoginGate→Outlet 切换)期间,open 已是 false,LoginGate
+    // 即使在 StrictMode 下被双 mount 也会被 provider 的不变式拦住。
     onClose();
+    await setInitialState((s: any) => ({ ...s, currentUser: user }));
     await onSuccess?.();
   };
 
@@ -58,19 +116,70 @@ export default function AuthModal({
     try {
       const res = await authApi.login(values);
       if (res.code === 0 && res.data) {
-        message.success('登录成功');
-        await applyLoginResult(
-          res.data.token,
-          (res.data as any).refresh_token,
-          res.data.user,
-        );
-      } else {
-        message.error((res as any).message || '登录失败');
+        // 登录验证码二次验证:后端返回 requires_code_2fa,切到验证码步骤。
+        if (res.data.requires_code_2fa && res.data.temp_token) {
+          setOtpInfo({
+            temp_token: res.data.temp_token,
+            target_masked: res.data.target_masked,
+          });
+          setOtpStep(true);
+          otpForm.resetFields();
+          message.info(t('auth.msg.otpPrompt'));
+          return;
+        }
+        message.success(t('auth.msg.loginSuccess'));
+        await applyLoginResult(res.data.token!, res.data.refresh_token, res.data.user!);
       }
-    } catch (e: any) {
-      message.error(e?.response?.data?.message || e?.message || '登录失败');
+      // 登录失败(code!==0 或请求抛错)统一由全局拦截器弹一次错,这里不再重复 toast
+    } catch {
+      // 错误已由全局 errorHandler 处理
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleLoginVerify = async (values: { code: string }) => {
+    setOtpLoading(true);
+    try {
+      const res = await authApi.loginVerifyCode({
+        temp_token: otpInfo.temp_token,
+        code: values.code,
+      });
+      if (res.code === 0 && res.data) {
+        message.success(t('auth.msg.loginSuccess'));
+        await applyLoginResult(res.data.token, res.data.refresh_token, res.data.user);
+      }
+      // 验证失败统一由全局拦截器弹一次错
+    } catch {
+      // 错误已由全局 errorHandler 处理
+    } finally {
+      setOtpLoading(false);
+    }
+  };
+
+  // 注册:发送验证码(邮箱/短信)。
+  const handleSendCode = async () => {
+    const channel = bothChannels ? regChannel : smsEnabled ? 'sms' : 'email';
+    try {
+      const email = regForm.getFieldValue('email');
+      const phone = regForm.getFieldValue('phone');
+      if (channel === 'email') {
+        await regForm.validateFields(['email']);
+      } else {
+        await regForm.validateFields(['phone']);
+      }
+      setSending(true);
+      const res = await authApi.sendCode({ channel, email, phone });
+      if (res.code === 0) {
+        message.success(t('auth.msg.codeSent'));
+        startCountdown(res.data?.countdown || 60);
+      }
+      // 发送失败统一由全局拦截器弹一次错
+    } catch (e: any) {
+      if (e?.errorFields) return; // 表单校验未过,字段下方已有内联提示
+      // 其余请求错误由全局 errorHandler 处理
+    } finally {
+      setSending(false);
     }
   };
 
@@ -79,33 +188,35 @@ export default function AuthModal({
     email: string;
     password: string;
     invite_code?: string;
+    phone?: string;
+    verify_code?: string;
   }) => {
     setRegLoading(true);
     try {
-      const reg = await authApi.register(values);
+      const channel = bothChannels ? regChannel : smsEnabled ? 'sms' : 'email';
+      const reg = await authApi.register(
+        verifyRequired
+          ? { ...values, channel, phone: values.phone, verify_code: values.verify_code }
+          : values,
+      );
       if (reg.code !== 0) {
-        message.error((reg as any).message || '注册失败');
-        return;
+        return; // 注册失败已由全局拦截器弹错
       }
       // 注册成功后自动登录,和 register.tsx 页面同样的行为
       const login = await authApi.login({
         email: values.email,
         password: values.password,
       });
-      if (login.code !== 0 || !login.data) {
-        message.warning('注册成功,请在登录页登录');
+      if (login.code !== 0 || !login.data || !login.data.token || !login.data.user) {
+        message.warning(t('auth.msg.registerNeedLogin'));
         setTab('login');
         loginForm.setFieldsValue({ email: values.email });
         return;
       }
-      message.success('注册成功,已为你登录');
-      await applyLoginResult(
-        login.data.token,
-        (login.data as any).refresh_token,
-        login.data.user,
-      );
-    } catch (e: any) {
-      message.error(e?.response?.data?.message || e?.message || '注册失败');
+      message.success(t('auth.msg.registerLoggedIn'));
+      await applyLoginResult(login.data.token, login.data.refresh_token, login.data.user);
+    } catch {
+      // 注册请求出错已由全局 errorHandler 处理
     } finally {
       setRegLoading(false);
     }
@@ -125,12 +236,10 @@ export default function AuthModal({
         <div className="auth-modal-aside">
           <div className="auth-modal-aside-content">
             <img className="auth-modal-aside-logo" src={logoSrc} alt={site.name} />
-            <p>
-              接入下一代 AI 模型中转站。无缝集成、高保真处理，在卓越架构中开启无限可能。
-            </p>
+            <p>{t('auth.aside.desc')}</p>
             <div className="auth-modal-status">
               <span />
-              系统运行中 · 所有节点已激活
+              {t('auth.aside.status')}
             </div>
           </div>
         </div>
@@ -154,7 +263,7 @@ export default function AuthModal({
               className={`auth-modal-tab${activeTab === 'login' ? ' active' : ''}`}
               onClick={() => setTab('login')}
             >
-              登录
+              {t('auth.tab.login')}
             </button>
             {canRegister && (
               <button
@@ -162,7 +271,7 @@ export default function AuthModal({
                 className={`auth-modal-tab${activeTab === 'register' ? ' active' : ''}`}
                 onClick={() => setTab('register')}
               >
-                注册
+                {t('auth.tab.register')}
               </button>
             )}
             <span className="auth-modal-tab-slider" aria-hidden="true" />
@@ -176,7 +285,30 @@ export default function AuthModal({
           )}
 
           <div className="auth-modal-panel">
-            {activeTab === 'login' ? (
+            {activeTab === 'login' && otpStep ? (
+              <Form form={otpForm} layout="vertical" onFinish={handleLoginVerify} requiredMark={false}>
+                <div className="auth-modal-copy" style={{ marginBottom: 12 }}>
+                  <div className="auth-modal-description">
+                    {t('auth.otp.sentTo', {
+                      target: otpInfo.target_masked || t('auth.otp.defaultTarget'),
+                    })}
+                  </div>
+                </div>
+                <Form.Item
+                  name="code"
+                  label={t('auth.otp.field')}
+                  rules={[{ required: true, message: t('auth.rule.codeRequired') }]}
+                >
+                  <Input size="large" prefix={<SafetyOutlined />} placeholder={t('auth.otp.placeholder')} />
+                </Form.Item>
+                <Button type="primary" htmlType="submit" block size="large" loading={otpLoading}>
+                  {t('auth.otp.verify')}
+                </Button>
+                <Button type="link" block onClick={() => setOtpStep(false)} style={{ marginTop: 8 }}>
+                  {t('auth.otp.back')}
+                </Button>
+              </Form>
+            ) : activeTab === 'login' ? (
               <Form
                 form={loginForm}
                 layout="vertical"
@@ -185,21 +317,37 @@ export default function AuthModal({
               >
                 <Form.Item
                   name="email"
-                  label="邮箱"
+                  label={t('auth.field.email')}
+                  getValueFromEvent={(e) => normalizeEmail(e.target.value)}
                   rules={[
-                    { required: true, message: '请输入邮箱' },
-                    { type: 'email', message: '邮箱格式不正确' },
+                    { required: true, message: t('auth.rule.emailRequired') },
+                    { type: 'email', message: t('auth.rule.emailInvalid') },
                   ]}
                 >
                   <Input size="large" prefix={<MailOutlined />} placeholder="you@example.com" />
                 </Form.Item>
                 <Form.Item
                   name="password"
-                  label="密码"
-                  rules={[{ required: true, message: '请输入密码' }]}
+                  label={t('auth.field.password')}
+                  rules={[{ required: true, message: t('auth.rule.passwordRequired') }]}
                 >
-                  <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码" />
+                  <Input.Password size="large" prefix={<LockOutlined />} placeholder={t('auth.ph.password')} />
                 </Form.Item>
+                {site.password_reset_enabled && (
+                  <div style={{ textAlign: 'right', marginBottom: 12 }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0 }}
+                      onClick={() => {
+                        onClose();
+                        history.push('/auth/forgot-password');
+                      }}
+                    >
+                      {t('auth.btn.forgot')}
+                    </Button>
+                  </div>
+                )}
                 <Button
                   type="primary"
                   htmlType="submit"
@@ -207,7 +355,7 @@ export default function AuthModal({
                   size="large"
                   loading={loginLoading}
                 >
-                  立即登录
+                  {t('auth.btn.login')}
                 </Button>
               </Form>
             ) : (
@@ -219,30 +367,79 @@ export default function AuthModal({
               >
                 <Form.Item
                   name="username"
-                  label="用户名"
-                  rules={[{ required: true, message: '请输入用户名' }]}
+                  label={t('auth.field.username')}
+                  rules={[{ required: true, message: t('auth.rule.usernameRequired') }]}
                 >
-                  <Input size="large" prefix={<UserOutlined />} placeholder="2-32 位" />
+                  <Input size="large" prefix={<UserOutlined />} placeholder={t('auth.ph.username')} />
                 </Form.Item>
                 <Form.Item
                   name="email"
-                  label="邮箱"
+                  label={t('auth.field.email')}
+                  getValueFromEvent={(e) => normalizeEmail(e.target.value)}
                   rules={[
-                    { required: true, message: '请输入邮箱' },
-                    { type: 'email', message: '邮箱格式不正确' },
+                    { required: true, message: t('auth.rule.emailRequired') },
+                    { type: 'email', message: t('auth.rule.emailInvalid') },
                   ]}
                 >
                   <Input size="large" prefix={<MailOutlined />} placeholder="you@example.com" />
                 </Form.Item>
+                {bothChannels && (
+                  <Form.Item label={t('auth.field.verifyMethod')}>
+                    <Segmented
+                      block
+                      value={regChannel}
+                      onChange={(v) => setRegChannel(v as 'email' | 'sms')}
+                      options={[
+                        { label: t('auth.channel.email'), value: 'email' },
+                        { label: t('auth.channel.sms'), value: 'sms' },
+                      ]}
+                    />
+                  </Form.Item>
+                )}
+                {((bothChannels && regChannel === 'sms') || (!bothChannels && smsEnabled)) && (
+                  <Form.Item
+                    name="phone"
+                    label={t('auth.field.phone')}
+                    getValueFromEvent={(e) => normalizePhone(e.target.value)}
+                    rules={[
+                      { required: true, message: t('auth.rule.phoneRequired') },
+                      { pattern: PHONE_RE, message: t('auth.rule.phoneInvalid') },
+                    ]}
+                  >
+                    <Input size="large" prefix={<MobileOutlined />} placeholder={t('auth.ph.phone')} />
+                  </Form.Item>
+                )}
+                {verifyRequired && (
+                  <Form.Item label={t('auth.field.verifyCode')} required style={{ marginBottom: 0 }}>
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Form.Item
+                        name="verify_code"
+                        noStyle
+                        rules={[{ required: true, message: t('auth.rule.codeRequired') }]}
+                      >
+                        <Input size="large" prefix={<SafetyOutlined />} placeholder={t('auth.ph.verifyCode')} />
+                      </Form.Item>
+                      <Button
+                        size="large"
+                        onClick={handleSendCode}
+                        loading={sending}
+                        disabled={countdown > 0}
+                        style={{ width: 130 }}
+                      >
+                        {countdown > 0 ? `${countdown}s` : t('auth.btn.sendCode')}
+                      </Button>
+                    </Space.Compact>
+                  </Form.Item>
+                )}
                 <Form.Item
                   name="password"
-                  label="密码"
-                  rules={[{ required: true, min: 6, message: '密码至少 6 位' }]}
+                  label={t('auth.field.password')}
+                  rules={[{ required: true, min: 6, message: t('auth.rule.passwordMin6') }]}
                 >
-                  <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码，至少 6 位" />
+                  <Input.Password size="large" prefix={<LockOutlined />} placeholder={t('auth.ph.passwordMin6')} />
                 </Form.Item>
-                <Form.Item name="invite_code" label="邀请码(可选)">
-                  <Input size="large" placeholder="没有可不填" />
+                <Form.Item name="invite_code" label={t('auth.field.inviteCode')}>
+                  <Input size="large" placeholder={t('auth.ph.inviteOptional')} />
                 </Form.Item>
                 <Button
                   type="primary"
@@ -251,7 +448,7 @@ export default function AuthModal({
                   size="large"
                   loading={regLoading}
                 >
-                  注册并登录
+                  {t('auth.btn.registerLogin')}
                 </Button>
               </Form>
             )}
