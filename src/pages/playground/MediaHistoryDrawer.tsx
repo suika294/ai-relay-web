@@ -27,7 +27,7 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
-import { userApi } from '@/services/api';
+import { apiURL } from '@/utils/request';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 
 const { Text } = Typography;
@@ -68,6 +68,8 @@ export interface MediaHistoryDrawerProps {
   kind: 'image' | 'video';
   open: boolean;
   onClose: () => void;
+  // 公开 Playground 用 sk- key 拉历史(不依赖登录态)。没有 key 时抽屉提示先填 key,不发请求。
+  apiKey?: string;
   // 通知父组件"重新把这条的 prompt 填回输入框" —— 回头可再生一张
   onReuse?: (task: API.MediaTask) => void;
 }
@@ -76,6 +78,7 @@ export default function MediaHistoryDrawer({
   kind,
   open,
   onClose,
+  apiKey,
   onReuse,
 }: MediaHistoryDrawerProps) {
   const intl = useIntl();
@@ -85,7 +88,7 @@ export default function MediaHistoryDrawer({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // 每次打开抽屉、或切换 kind,都从第一页重新加载。关闭不清数据,下次打开更快。
+  // 每次打开抽屉、切换 kind、或填了 key,都从第一页重新加载。关闭不清数据,下次打开更快。
   useEffect(() => {
     if (!open) return;
     setList([]);
@@ -93,14 +96,25 @@ export default function MediaHistoryDrawer({
     setTotal(0);
     loadPage(1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, kind]);
+  }, [open, kind, apiKey]);
 
   const loadPage = async (p: number, replace: boolean) => {
+    if (!apiKey) {
+      // 公开页未填 key:不发请求(否则 401),提示先填。
+      setList([]);
+      setTotal(0);
+      setErr(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+      return;
+    }
     setLoading(true);
     setErr(null);
     try {
-      const fn = kind === 'image' ? userApi.images : userApi.videos;
-      const res = await fn({ page: p, size: PAGE_SIZE });
+      // 走 sk- key 鉴权的列表接口(APIKeyAuth),拉本 key 主人名下的历史,不依赖登录态。
+      const path = kind === 'image' ? '/v1/images/generations' : '/v1/videos/generations';
+      const resp = await fetch(apiURL(`${path}?page=${p}&size=${PAGE_SIZE}`), {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const res = (await resp.json()) as API.Response<{ list: API.MediaTask[]; total: number }>;
       if (res.code !== 0) {
         setErr(res.message || intl.formatMessage({ id: 'playground.mediaHistory.loadFailed' }));
         return;

@@ -5,6 +5,7 @@ export default {
   'layout.nav.models': '模型广场',
   'layout.nav.recharge': '充值',
   'layout.nav.docs': '文档中心',
+  'layout.nav.playground': 'Playground',
   'layout.nav.menu': '导航菜单',
   // 公开页用户下拉
   'layout.user.console': '进入控制台',

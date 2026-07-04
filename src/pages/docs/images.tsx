@@ -388,7 +388,7 @@ export default function DocImages() {
           { id: 'docs.images.videoDesc' },
           {
             code: (c: any) => <code>{c}</code>,
-            link: (c: any) => <Link to="/console/playground">{c}</Link>,
+            link: (c: any) => <Link to="/playground">{c}</Link>,
           },
         )}
       </p>

@@ -28,10 +28,13 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_general_one_click_last_task_v1';
 
@@ -143,8 +146,7 @@ function stateToStatus(s?: string): string {
 export default function GeneralOneClickPanel() {
   const intl = useIntl();
   const [hasModel, setHasModel] = useState<boolean>(true);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
-  const [tokenId, setTokenId] = useState<number>();
+  const { apiKey } = usePlaygroundApiKey();
   const [images, setImages] = useState<GenImage[]>([]);
   const [prompt, setPrompt] = useState<string>('');
   const [duration, setDuration] = useState<number>(15);
@@ -176,11 +178,6 @@ export default function GeneralOneClickPanel() {
       const list = (res.data as any[]) || [];
       setHasModel(list.some((m) => m.name === GENERAL_MODEL && m.enabled !== false));
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
     if (saved) {
@@ -206,10 +203,6 @@ export default function GeneralOneClickPanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length || selectedToken.allowed_models.includes(GENERAL_MODEL);
-
   const removeImage = (uid: string) => setImages((prev) => prev.filter((x) => x.uid !== uid));
 
   const uploadProps: UploadProps = {
@@ -232,28 +225,17 @@ export default function GeneralOneClickPanel() {
       setUploading(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, { module: 'i2v_input', purpose: 'i2v_reference' });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.generalOneClick.uploadFailed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.generalOneClick.fetchAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
-        const assetID = uploaded.data.id;
+        const { url, id } = await playgroundUpload(f, apiKey, { module: 'i2v_input', purpose: 'i2v_reference' });
+        const assetID = id;
         setImages((prev) => {
           if (prev.length >= MAX_IMAGES || prev.some((x) => x.url === url)) return prev;
           return [
             ...prev,
-            { uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url: url!, name: f.name || intl.formatMessage({ id: 'playground.generalOneClick.defaultImageName' }) },
+            { uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url: url, name: f.name || intl.formatMessage({ id: 'playground.generalOneClick.defaultImageName' }) },
           ];
         });
         message.success(intl.formatMessage({ id: 'playground.generalOneClick.imageAdded' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.generalOneClick.uploadFailed' }));
         onError?.(e);
@@ -282,11 +264,11 @@ export default function GeneralOneClickPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -322,10 +304,10 @@ export default function GeneralOneClickPanel() {
 
   // 轮询编辑/合成产生的子任务(独立于主成片)。
   const fetchChild = async (id: string) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -350,12 +332,8 @@ export default function GeneralOneClickPanel() {
       return message.warning(
         intl.formatMessage({ id: 'playground.generalOneClick.modelNotFoundWarn' }, { model: GENERAL_MODEL }),
       );
-    if (!selectedToken)
-      return message.warning(intl.formatMessage({ id: 'playground.generalOneClick.createKeyFirst' }));
-    if (!tokenAllowsModel)
-      return message.warning(
-        intl.formatMessage({ id: 'playground.generalOneClick.keyModelRestricted' }, { model: GENERAL_MODEL }),
-      );
+    if (!apiKey)
+      return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
     if (images.length === 0)
       return message.warning(intl.formatMessage({ id: 'playground.generalOneClick.uploadAtLeastOne' }));
 
@@ -382,7 +360,7 @@ export default function GeneralOneClickPanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -406,12 +384,12 @@ export default function GeneralOneClickPanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -440,11 +418,11 @@ export default function GeneralOneClickPanel() {
   };
 
   const loadStatus = async () => {
-    if (!mainTaskId || !selectedToken) return;
+    if (!mainTaskId || !apiKey) return;
     setLoadingStatus(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/general-one-click/${mainTaskId}/status`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -460,7 +438,7 @@ export default function GeneralOneClickPanel() {
   };
 
   const submitEdit = async () => {
-    if (!mainTaskId || !selectedToken) return;
+    if (!mainTaskId || !apiKey) return;
     if (!editJobId)
       return message.warning(intl.formatMessage({ id: 'playground.generalOneClick.selectStoryboardFirst' }));
     if (!editPrompt.trim())
@@ -469,7 +447,7 @@ export default function GeneralOneClickPanel() {
     try {
       const res = await fetch(apiURL(`/v1/videos/general-one-click/${mainTaskId}/edit`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${selectedToken.key}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ job_id: editJobId, prompt: editPrompt.trim() }),
       });
       const text = await res.text();
@@ -489,14 +467,14 @@ export default function GeneralOneClickPanel() {
   };
 
   const submitCompose = async () => {
-    if (!mainTaskId || !selectedToken) return;
+    if (!mainTaskId || !apiKey) return;
     if (composeIds.length === 0)
       return message.warning(intl.formatMessage({ id: 'playground.generalOneClick.checkComposeStoryboards' }));
     setPosting(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/general-one-click/${mainTaskId}/compose`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${selectedToken.key}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({ job_ids: composeIds }),
       });
       const text = await res.text();
@@ -552,22 +530,7 @@ export default function GeneralOneClickPanel() {
                 description={intl.formatMessage({ id: 'playground.generalOneClick.modelNotFoundAlertDesc' })}
               />
             )}
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.generalOneClick.selectApiKey' })}
-                options={tokens.map((t) => ({ value: t.id, label: `${t.name} (${t.key_prefix}***)` }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={locked}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.generalOneClick.keyModelRestrictedInline' }, { model: GENERAL_MODEL })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 120 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.generalOneClick.durationLabel' })}</div>
@@ -652,7 +615,7 @@ export default function GeneralOneClickPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!hasModel || !selectedToken || !!isInFlight || images.length === 0}
+              disabled={!hasModel || !apiKey || !!isInFlight || images.length === 0}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.generalOneClick.submitting' })

@@ -20,4 +20,8 @@ export default {
   'common.notLoggedIn': 'Not signed in',
   'common.requestFailed': 'Request failed',
   'common.bizError': 'Something went wrong',
+  'common.exportCsv': 'Export CSV',
+  'common.exporting': 'Exporting…',
+  'common.exportSuccess': 'Export complete',
+  'common.exportFailed': 'Export failed: {detail}',
 };

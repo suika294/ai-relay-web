@@ -20,4 +20,8 @@ export default {
   'common.notLoggedIn': '未登录',
   'common.requestFailed': '请求失败',
   'common.bizError': '业务错误',
+  'common.exportCsv': '导出 CSV',
+  'common.exporting': '正在导出…',
+  'common.exportSuccess': '导出完成',
+  'common.exportFailed': '导出失败:{detail}',
 };

@@ -68,6 +68,8 @@ export const userApi = {
   profile: () => request<API.Response<API.User>>('/api/v1/user/profile'),
   updateProfile: (data: Partial<API.User>) =>
     request<API.Response>('/api/v1/user/profile', { method: 'PUT', data }),
+  changePassword: (data: { old_password: string; new_password: string }) =>
+    request<API.Response>('/api/v1/user/password', { method: 'PUT', data }),
   balance: () => request<API.Response<API.Balance>>('/api/v1/user/balance'),
   logs: (params: {
     page?: number;

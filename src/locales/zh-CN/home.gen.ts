@@ -39,6 +39,7 @@ export default {
   "home.index.mute": "静音",
   "home.index.unmute": "取消静音",
   "home.index.context": "上下文",
+  "home.index.globalEdition": "海外 / 全球版",
   "home.index.generateKey": "生成 Key",
   "home.index.create": "创作",
   "home.index.heroTitleLine1": "一次接入,",

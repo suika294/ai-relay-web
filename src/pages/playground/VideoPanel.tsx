@@ -26,9 +26,9 @@ import {
   Upload,
 } from 'antd';
 import type { UploadProps } from 'antd';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import {
   browserDownloadName,
@@ -37,6 +37,9 @@ import {
 } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_video_last_task_v1';
@@ -207,14 +210,23 @@ function statusText(s: string): string {
 export default function VideoPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [prompt, setPrompt] = useState('');
   const [imageURL, setImageURL] = useState('');
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [duration, setDuration] = useState<number | undefined>(5);
   const [resolution, setResolution] = useState<string | undefined>('1080p');
+  // 画面比例 / 有声无声:默认 undefined = 不指定(不发,保持各模型默认);只在用户选了才进 body。
+  const [aspectRatio, setAspectRatio] = useState<string | undefined>(undefined);
+  const [audio, setAudio] = useState<'on' | 'off' | undefined>(undefined);
+  // AIGC 素材引用(豆包 VS 等):选一条 ready 素材 → 拼 asset://<AssetId> 进 extra.file_infos。
+  const [materials, setMaterials] = useState<
+    { id: number; asset_type: string; upstream_asset_id: string; display_name?: string; is_real_person: boolean }[]
+  >([]);
+  const [materialAssetId, setMaterialAssetId] = useState<string | undefined>(undefined);
+  const [materialCategory, setMaterialCategory] = useState<string>('Image');
+  const [materialsLoading, setMaterialsLoading] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [uploadingRef, setUploadingRef] = useState(false);
@@ -238,17 +250,13 @@ export default function VideoPanel() {
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
     if (saved) {
       try {
         const t = JSON.parse(saved) as VideoTask;
         setTask(t);
+        // (素材列表在独立 effect 里按 apiKey 拉取)
         // 恢复的任务若非终态,继续轮询
         if (t.status === 'queued' || t.status === 'running') {
           startTimer(t.created_at);
@@ -267,10 +275,34 @@ export default function VideoPanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
+  // 拉取当前 key 下 ready 的 AIGC 素材,供「引用素材」下拉选(只有有 AssetId 的才能引用)。
+  const fetchMaterials = useCallback(async () => {
+    if (!apiKey) {
+      setMaterials([]);
+      return;
+    }
+    setMaterialsLoading(true);
+    try {
+      const res = await fetch(apiURL('/v1/aigc/materials'), {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return;
+      const body = await res.json();
+      const ready = ((body?.data as any[]) || []).filter(
+        (m) => m.status === 'ready' && m.upstream_asset_id,
+      );
+      setMaterials(ready);
+    } catch {
+      /* 忽略:素材引用是可选增强 */
+    } finally {
+      setMaterialsLoading(false);
+    }
+  }, [apiKey]);
+
+  useEffect(() => {
+    fetchMaterials();
+  }, [fetchMaterials]);
+
   const isSeedanceModel = isDoubaoSeedanceModel(modelName);
   const requiresPublicReferenceURL = isSeedanceModel || isViduModel(modelName);
 
@@ -340,44 +372,30 @@ export default function VideoPanel() {
       setUploadingRef(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, {
+        const { url, id: assetID } = await playgroundUpload(f, apiKey, {
           module: 'i2v_input',
           purpose: 'i2v_reference',
         });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.video.uploadFailed' }));
-        }
-
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.video.fetchAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
         if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
           message.warning(intl.formatMessage({ id: 'playground.video.warnUploadNeedPublic' }));
-          onSuccess?.(uploaded as any);
+          onSuccess?.({} as any);
           return;
         }
 
-        const assetID = uploaded.data.id;
-        const assetFilename = uploaded.data.filename;
         setReferenceImages((prev) => {
           if (prev.some((x) => x.url === url)) return prev;
           const item: ReferenceImage = {
             uid: `asset-${assetID}-${Date.now()}`,
             assetId: assetID,
             url,
-            name: f.name || assetFilename || intl.formatMessage({ id: 'playground.video.refImageName' }),
+            name: f.name || intl.formatMessage({ id: 'playground.video.refImageName' }),
             source: 'upload',
             role: defaultRoleForNew(prev),
           };
           return [...prev, item];
         });
         message.success(intl.formatMessage({ id: 'playground.video.refImageAdded' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.video.uploadFailed' }));
         onError?.(e);
@@ -408,11 +426,11 @@ export default function VideoPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -447,18 +465,16 @@ export default function VideoPanel() {
   };
 
   useEffect(() => {
-    if (!task || !selectedToken || !hasPrivateVideoURL(task)) return;
+    if (!task || !apiKey || !hasPrivateVideoURL(task)) return;
     setErrMsg(intl.formatMessage({ id: 'playground.video.refetchingTransferredUrl' }));
     fetchOnce(task.id, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [task?.id, task?.data?.[0]?.url, selectedToken?.id]);
+  }, [task?.id, task?.data?.[0]?.url, apiKey]);
 
   const submit = async () => {
     if (!prompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.video.warnInputPrompt' }));
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.video.warnSelectModel' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.video.warnCreateKey' }));
-    if (!tokenAllowsModel)
-      return message.warning(intl.formatMessage({ id: 'playground.video.warnKeyModelLimit' }, { model: modelName }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
 
     setSubmitting(true);
     setErrMsg(null);
@@ -505,12 +521,23 @@ export default function VideoPanel() {
       }
       if (duration) body.duration = duration;
       if (resolution) body.resolution = resolution;
+      if (aspectRatio) body.aspect_ratio = aspectRatio;
+      if (audio === 'on') body.audio = true;
+      else if (audio === 'off') body.audio = false;
+      // AIGC 真人/非真人素材引用:走 extra.file_infos,Url=asset://<AssetId>,Category=素材类型。
+      if (materialAssetId) {
+        body.extra = {
+          file_infos: [
+            { Type: 'Url', Category: materialCategory, Url: `asset://${materialAssetId}`, Usage: 'Reference' },
+          ],
+        };
+      }
 
       const res = await fetch(apiURL('/v1/videos/generations'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -533,12 +560,12 @@ export default function VideoPanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -610,25 +637,7 @@ export default function VideoPanel() {
                 disabled={!!isInFlight || submitting}
               />
             </div>
-            <div>
-              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.apiKeyLabel' })}</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.video.apiKeyPlaceholder' })}
-                options={tokens.map((t) => ({
-                  value: t.id,
-                  label: `${t.name} (${t.key_prefix}***)`,
-                }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={!!isInFlight || submitting}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.video.warnKeyModelLimit' }, { model: modelName })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.durationLabel' })}</div>
@@ -654,6 +663,40 @@ export default function VideoPanel() {
                     { value: '480p', label: '480p' },
                     { value: '720p', label: '720p' },
                     { value: '1080p', label: '1080p' },
+                  ]}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.aspectRatioLabel' })}</div>
+                <Select
+                  style={{ width: '100%' }}
+                  allowClear
+                  placeholder={intl.formatMessage({ id: 'playground.video.unset' })}
+                  value={aspectRatio}
+                  onChange={setAspectRatio}
+                  options={['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map((r) => ({ value: r, label: r }))}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={labelStyle}>
+                  {intl.formatMessage({ id: 'playground.video.audioLabel' })}
+                  <span style={{ color: '#999', fontSize: 12, marginLeft: 6 }}>
+                    {intl.formatMessage({ id: 'playground.video.audioHint' })}
+                  </span>
+                </div>
+                <Select
+                  style={{ width: '100%' }}
+                  allowClear
+                  placeholder={intl.formatMessage({ id: 'playground.video.unset' })}
+                  value={audio}
+                  onChange={(v) => setAudio(v as 'on' | 'off' | undefined)}
+                  options={[
+                    { value: 'on', label: intl.formatMessage({ id: 'playground.video.audioOn' }) },
+                    { value: 'off', label: intl.formatMessage({ id: 'playground.video.audioOff' }) },
                   ]}
                   disabled={!!isInFlight || submitting}
                 />
@@ -737,6 +780,39 @@ export default function VideoPanel() {
               )}
             </div>
             <div>
+              <div style={labelStyle}>
+                {intl.formatMessage({ id: 'playground.video.materialLabel' })}
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ReloadOutlined spin={materialsLoading} />}
+                  onClick={fetchMaterials}
+                  style={{ paddingInline: 4 }}
+                >
+                  {intl.formatMessage({ id: 'playground.video.materialRefresh' })}
+                </Button>
+              </div>
+              <Select
+                allowClear
+                style={{ width: '100%' }}
+                placeholder={intl.formatMessage({
+                  id: materials.length ? 'playground.video.materialPlaceholder' : 'playground.video.materialEmpty',
+                })}
+                notFoundContent={intl.formatMessage({ id: 'playground.video.materialEmpty' })}
+                value={materialAssetId}
+                disabled={!!isInFlight || submitting}
+                onChange={(v) => {
+                  setMaterialAssetId(v);
+                  const m = materials.find((x) => x.upstream_asset_id === v);
+                  if (m) setMaterialCategory(m.asset_type || 'Image');
+                }}
+                options={materials.map((m) => ({
+                  value: m.upstream_asset_id,
+                  label: `${m.is_real_person ? '👤 ' : ''}${m.display_name || m.upstream_asset_id} · ${m.asset_type}`,
+                }))}
+              />
+            </div>
+            <div>
               <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.promptLabel' })}</div>
               <TextArea
                 placeholder={intl.formatMessage({ id: 'playground.video.promptPlaceholder' })}
@@ -753,7 +829,7 @@ export default function VideoPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!prompt.trim() || !modelName || !selectedToken || !!isInFlight}
+              disabled={!prompt.trim() || !modelName || !apiKey || !!isInFlight}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.video.submitting' })
@@ -1003,6 +1079,7 @@ export default function VideoPanel() {
       <MediaHistoryDrawer
         kind="video"
         open={historyOpen}
+        apiKey={apiKey}
         onClose={() => setHistoryOpen(false)}
         onReuse={(t) => {
           // 把历史任务的提示词填回来,不自动改模型/参数,避免覆盖用户的当前设置

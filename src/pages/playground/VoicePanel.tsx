@@ -3,9 +3,11 @@ import { Alert, AutoComplete, Button, Card, Collapse, Empty, Input, message, Seg
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
-import { systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { apiURL } from '@/utils/request';
 import { t } from '@/utils/i18n';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
 
 const { TextArea } = Input;
 
@@ -603,10 +605,9 @@ type ASRModelOpt = {
 
 function ASRMode() {
   const intl = useIntl();
+  const { apiKey } = usePlaygroundApiKey();
   const [models, setModels] = useState<ASRModelOpt[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
 
   const [input, setInput] = useState<'file' | 'url' | 'mic'>('file');
   const [routeMode, setRouteMode] = useState<RouteMode>('auto');
@@ -682,11 +683,6 @@ function ASRMode() {
         });
       }
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_ASR_TASK);
     if (saved) {
@@ -713,9 +709,6 @@ function ASRMode() {
   useEffect(() => {
     if (task) localStorage.setItem(LS_ASR_TASK, JSON.stringify(task));
   }, [task]);
-
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel = !selectedToken?.allowed_models?.length || selectedToken.allowed_models.includes(modelName || '');
 
   // 文件接入:存文件 + 抠时长(<audio>.duration)
   const acceptFile = async (f: File) => {
@@ -909,8 +902,8 @@ function ASRMode() {
   };
 
   const pollOnce = async (id: string, ch: string, mdl: string, auto = false) => {
-    if (!selectedToken) {
-      // Token 加载未到位,稍后重试
+    if (!apiKey) {
+      // Key 未填,稍后重试
       schedulePoll(id, ch, mdl, 1000);
       return;
     }
@@ -921,7 +914,7 @@ function ASRMode() {
       if (ch) params.set('channel', ch);
       const q = params.toString() ? `?${params.toString()}` : '';
       const res = await fetch(apiURL(`/v1/audio/transcriptions/${encodeURIComponent(id)}${q}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -955,8 +948,7 @@ function ASRMode() {
   };
 
   const submit = async () => {
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.voice.selectKeyFirst' }));
-    if (!tokenAllowsModel) return message.warning(intl.formatMessage({ id: 'playground.voice.keyModelLimited' }, { model: modelName }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
 
     const decided = await decideRouteAndPayload();
     if ('error' in decided) {
@@ -974,7 +966,7 @@ function ASRMode() {
       const url = decided.route === 'sync' ? '/v1/audio/transcriptions' : '/v1/audio/transcriptions/async';
       const init: RequestInit = {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       };
       if (decided.payload instanceof FormData) {
         init.body = decided.payload;
@@ -1116,21 +1108,7 @@ function ASRMode() {
             </div>
           </div>
 
-          <div>
-            <div className="pg-voice-label">API Key</div>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={intl.formatMessage({ id: 'playground.voice.selectKeyPh' })}
-              options={tokens.map((t) => ({
-                value: t.id,
-                label: `${t.name} (${t.key_prefix}***)`,
-              }))}
-              value={tokenId}
-              onChange={setTokenId}
-              disabled={submitting || !!isInFlight}
-            />
-            {selectedToken && !tokenAllowsModel && <div className="pg-voice-warn">{intl.formatMessage({ id: 'playground.voice.keyModelLimited' }, { model: modelName })}</div>}
-          </div>
+          <ApiKeyField />
 
           <div>
             <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.asr.inputMethod' })}</div>
@@ -1246,7 +1224,7 @@ function ASRMode() {
             </div>
           </details>
 
-          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !selectedToken || !!isInFlight || recording}>
+          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !apiKey || !!isInFlight || recording}>
             {submitting ? intl.formatMessage({ id: 'playground.voice.submitting' }) : isInFlight ? intl.formatMessage({ id: 'playground.voice.asr.recognizing' }) : intl.formatMessage({ id: 'playground.voice.asr.startRecognize' })}
           </Button>
         </Space>
@@ -1390,10 +1368,9 @@ type TTSModelOpt = {
 
 function TTSMode() {
   const intl = useIntl();
+  const { apiKey } = usePlaygroundApiKey();
   const [models, setModels] = useState<TTSModelOpt[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
 
   const [text, setText] = useState(() => intl.formatMessage({ id: 'playground.voice.tts.defaultText' }));
   const [voice, setVoice] = useState<string>('alloy');
@@ -1448,11 +1425,6 @@ function TTSMode() {
         });
       }
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_TTS_TASK);
     if (saved) {
@@ -1493,15 +1465,14 @@ function TTSMode() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelName, models]);
 
-  // 拉用户自己的克隆音色(ready),注入音色下拉建议。依赖 selectedToken(需要鉴权)。
+  // 拉用户自己的克隆音色(ready),注入音色下拉建议。依赖 apiKey(需要鉴权)。
   useEffect(() => {
-    const tk = tokens.find((t) => t.id === tokenId);
-    if (!tk) {
+    if (!apiKey) {
       setClonedVoices([]);
       return;
     }
     let aborted = false;
-    fetch(apiURL('/v1/audio/voice_clones'), { headers: { Authorization: `Bearer ${tk.key}` } })
+    fetch(apiURL('/v1/audio/voice_clones'), { headers: { Authorization: `Bearer ${apiKey}` } })
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         if (aborted || !body) return;
@@ -1522,14 +1493,11 @@ function TTSMode() {
     return () => {
       aborted = true;
     };
-  }, [tokens, tokenId]);
+  }, [apiKey]);
 
   useEffect(() => {
     if (task) localStorage.setItem(LS_TTS_TASK, JSON.stringify(task));
   }, [task]);
-
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel = !selectedToken?.allowed_models?.length || selectedToken.allowed_models.includes(modelName || '');
 
   const selectedModel = models.find((x) => x.value === modelName);
   const selectedProviderType = selectedModel?.providerInfo.providerType;
@@ -1559,7 +1527,7 @@ function TTSMode() {
   };
 
   const pollOnce = async (id: string, ch: string, auto = false) => {
-    if (!selectedToken) {
+    if (!apiKey) {
       schedulePoll(id, ch, 1000);
       return;
     }
@@ -1567,7 +1535,7 @@ function TTSMode() {
     try {
       const q = ch ? `?channel=${encodeURIComponent(ch)}` : '';
       const res = await fetch(apiURL(`/v1/audio/speech/${encodeURIComponent(id)}${q}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -1601,8 +1569,7 @@ function TTSMode() {
 
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.voice.asr.selectModel' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.voice.selectKeyFirst' }));
-    if (!tokenAllowsModel) return message.warning(intl.formatMessage({ id: 'playground.voice.keyModelLimited' }, { model: modelName }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
 
     const decided = decideRoute();
     if (typeof decided !== 'string') {
@@ -1634,7 +1601,7 @@ function TTSMode() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -1768,21 +1735,7 @@ function TTSMode() {
             </div>
           </div>
 
-          <div>
-            <div className="pg-voice-label">API Key</div>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={intl.formatMessage({ id: 'playground.voice.selectKeyPh' })}
-              options={tokens.map((t) => ({
-                value: t.id,
-                label: `${t.name} (${t.key_prefix}***)`,
-              }))}
-              value={tokenId}
-              onChange={setTokenId}
-              disabled={submitting || !!isInFlight}
-            />
-            {selectedToken && !tokenAllowsModel && <div className="pg-voice-warn">{intl.formatMessage({ id: 'playground.voice.keyModelLimited' }, { model: modelName })}</div>}
-          </div>
+          <ApiKeyField />
 
           <div>
             <div className="pg-voice-label">
@@ -1935,7 +1888,7 @@ function TTSMode() {
             </div>
           </details>
 
-          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !selectedToken || !!isInFlight || charCount === 0}>
+          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !apiKey || !!isInFlight || charCount === 0}>
             {submitting ? intl.formatMessage({ id: 'playground.voice.submitting' }) : isInFlight ? intl.formatMessage({ id: 'playground.voice.tts.synthesizing' }) : intl.formatMessage({ id: 'playground.voice.tts.startSynthesize' })}
           </Button>
         </Space>

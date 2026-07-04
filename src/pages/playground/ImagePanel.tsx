@@ -28,10 +28,13 @@ import type { UploadProps } from 'antd';
 import { useIntl } from '@umijs/max';
 import { useEffect, useRef, useState } from 'react';
 import { t } from '@/utils/i18n';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { browserDownloadName } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_image_last_task_v1';
@@ -433,9 +436,8 @@ function statusText(s: string): string {
 export default function ImagePanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [prompt, setPrompt] = useState('');
   const [imageURL, setImageURL] = useState('');
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
@@ -471,11 +473,6 @@ export default function ImagePanel() {
         }));
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
-    });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
     });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
@@ -530,11 +527,6 @@ export default function ImagePanel() {
     setImageSizeTier((prev) => reconcile(prev, c.imageSizeOpts, c.defaultImageSize));
   }, [modelName]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
-
   const referenceURLs = () => {
     const urls = referenceImages.map((x) => x.url).filter(Boolean);
     const manual = imageURL.trim();
@@ -587,32 +579,16 @@ export default function ImagePanel() {
             intl.formatMessage({ id: 'playground.image.refRejected' }, { error: probe.error }),
           );
         }
-        const uploaded = await assetApi.upload(f, {
+        const { url, id } = await playgroundUpload(f, apiKey, {
           module: 'image',
           purpose: 'image_reference',
         });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(
-            uploaded.message || intl.formatMessage({ id: 'playground.image.uploadFailed' }),
-          );
-        }
-
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(
-              detail.message || intl.formatMessage({ id: 'playground.image.getAssetUrlFailed' }),
-            );
-          }
-          url = detail.data.url;
-        }
 
         const item: ReferenceImage = {
-          uid: `asset-${uploaded.data.id}-${Date.now()}`,
-          assetId: uploaded.data.id,
+          uid: `asset-${id}-${Date.now()}`,
+          assetId: id,
           url,
-          name: f.name || uploaded.data.filename || intl.formatMessage({ id: 'playground.image.refImage' }),
+          name: f.name || intl.formatMessage({ id: 'playground.image.refImage' }),
           source: 'upload',
         };
         setReferenceImages((prev) => {
@@ -620,7 +596,7 @@ export default function ImagePanel() {
           return [...prev, item];
         });
         message.success(intl.formatMessage({ id: 'playground.image.refAdded' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.image.uploadFailed' }));
         onError?.(e);
@@ -651,11 +627,11 @@ export default function ImagePanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/images/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -692,11 +668,7 @@ export default function ImagePanel() {
   const submit = async () => {
     if (!prompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.image.warnPrompt' }));
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.image.warnModel' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.image.warnToken' }));
-    if (!tokenAllowsModel)
-      return message.warning(
-        intl.formatMessage({ id: 'playground.image.warnTokenModelLimit' }, { model: modelName }),
-      );
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
 
     setSubmitting(true);
     setErrMsg(null);
@@ -728,7 +700,7 @@ export default function ImagePanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -753,12 +725,12 @@ export default function ImagePanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/images/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -830,25 +802,7 @@ export default function ImagePanel() {
                 disabled={!!isInFlight || submitting}
               />
             </div>
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.image.selectTokenPlaceholder' })}
-                options={tokens.map((t) => ({
-                  value: t.id,
-                  label: `${t.name} (${t.key_prefix}***)`,
-                }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={!!isInFlight || submitting}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.image.warnTokenModelLimit' }, { model: modelName })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div style={{ display: 'flex', gap: 12 }}>
               {controls.sizeOpts.length > 0 && (
                 <div style={{ flex: 1 }}>
@@ -1023,7 +977,7 @@ export default function ImagePanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!prompt.trim() || !modelName || !selectedToken || !!isInFlight}
+              disabled={!prompt.trim() || !modelName || !apiKey || !!isInFlight}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.image.submitting' })
@@ -1298,6 +1252,7 @@ export default function ImagePanel() {
       <MediaHistoryDrawer
         kind="image"
         open={historyOpen}
+        apiKey={apiKey}
         onClose={() => setHistoryOpen(false)}
         onReuse={(t) => {
           if (t.prompt) setPrompt(t.prompt);

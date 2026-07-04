@@ -5,6 +5,7 @@ export default {
   'layout.nav.models': 'Models',
   'layout.nav.recharge': 'Recharge',
   'layout.nav.docs': 'Docs',
+  'layout.nav.playground': 'Playground',
   'layout.nav.menu': 'Navigation',
   // public user dropdown
   'layout.user.console': 'Go to Console',

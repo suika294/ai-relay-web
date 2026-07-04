@@ -1,9 +1,11 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
+import { DownloadOutlined } from '@ant-design/icons';
 import { useIntl } from '@umijs/max';
-import { Tag } from 'antd';
-import { useState } from 'react';
+import { Button, Tag } from 'antd';
+import { useRef, useState } from 'react';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { userApi } from '@/services/api';
+import { downloadCSV } from '@/utils/download';
 
 export default function Logs() {
   const intl = useIntl();
@@ -11,6 +13,8 @@ export default function Logs() {
   // 避免引入 actionRef + onLoad 把 request 拆成两半(与 admin UsageLogTable 同一做法)。
   const [summary, setSummary] = useState<API.UsageLogSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  // 记住列表当前生效的筛选条件,导出按钮据此把"当前筛选"传给导出端点(与 admin UsageLogTable 同款)。
+  const lastFilters = useRef<Record<string, any>>({});
 
   const successRate =
     summary && summary.requests > 0
@@ -45,6 +49,15 @@ export default function Logs() {
       <SummaryBar stats={stats} loading={summaryLoading && !summary} />
       <ProTable<API.UsageLog>
         rowKey="id"
+        toolBarRender={() => [
+          <Button
+            key="export"
+            icon={<DownloadOutlined />}
+            onClick={() => downloadCSV('/api/v1/user/logs/export', lastFilters.current)}
+          >
+            {intl.formatMessage({ id: 'common.exportCsv' })}
+          </Button>,
+        ]}
         request={async (params) => {
           const filters = {
             page: params.current,
@@ -54,6 +67,7 @@ export default function Logs() {
             since: params.since,
             until: params.until,
           };
+          lastFilters.current = filters;
           setSummaryLoading(true);
           const [listRes, sumRes] = await Promise.all([
             userApi.logs(filters),
@@ -73,7 +87,20 @@ export default function Logs() {
             title: intl.formatMessage({ id: 'logs.index.colTokenKey' }),
             dataIndex: 'token_key',
             search: false,
-            render: (_, row) => row.token_key || (row.token_id ? `#${row.token_id}` : '-'),
+            // 密钥名称为主(粗),打码密钥 sk-xxx****xxx 次要(灰色小字);两者都空时回退 #token_id。
+            render: (_, row) => {
+              if (!row.token_name && !row.token_key) {
+                return row.token_id ? `#${row.token_id}` : '-';
+              }
+              return (
+                <div style={{ lineHeight: 1.3 }}>
+                  {row.token_name && <div style={{ fontWeight: 600 }}>{row.token_name}</div>}
+                  {row.token_key && (
+                    <div style={{ fontSize: 12, color: '#999' }}>{row.token_key}</div>
+                  )}
+                </div>
+              );
+            },
           },
           { title: intl.formatMessage({ id: 'logs.index.colModel' }), dataIndex: 'model' },
           { title: intl.formatMessage({ id: 'logs.index.colChannel' }), dataIndex: 'channel_name', search: false },

@@ -285,6 +285,11 @@ export default function DocThreeD() {
                 <code>hy-3d-express</code>、<code>Tripo/Tripo-H3.1</code>、
                 <code>Tripo/Tripo-P1.0</code>、<code>hyper3d-gen2</code>、
                 <code>hitem3d-2.0</code>、<code>doubao-seed3d-2-0-260328</code>。
+                {intl.formatMessage({ id: 'docs.threeD.fieldModelDescAdv' })}{' '}
+                <code>hy-3d-profile</code>、<code>hy-3d-texture</code>、
+                <code>hy-3d-reduceface</code>、<code>hy-3d-part</code>、
+                <code>hy-3d-uv</code>、<code>hy-3d-motion</code>、
+                <code>hy-3d-rigging</code>、<code>hy-3d-convert</code>。
                 {intl.formatMessage({ id: 'docs.threeD.fieldModelDesc2' })}{' '}
                 <Link to="/docs/models">
                   {intl.formatMessage({ id: 'docs.threeD.modelListLink' })}
@@ -655,6 +660,377 @@ export default function DocThreeD() {
         </p>
       </Callout>
 
+      {/* ===== 进阶能力:3D→3D 与同步格式转换(腾讯混元生 3D) ===== */}
+      <h2>{intl.formatMessage({ id: 'docs.threeD.advHeading' })}</h2>
+      <p>
+        {intl.formatMessage({ id: 'docs.threeD.advIntro1' })}{' '}
+        <code>POST {API_BASE}/3d/generations</code>{' '}
+        {intl.formatMessage({ id: 'docs.threeD.advIntro2' })}{' '}
+        <code>input_model_url</code>{' '}
+        {intl.formatMessage({ id: 'docs.threeD.advIntro3' })}
+      </p>
+
+      <Callout
+        type="warn"
+        title={intl.formatMessage({ id: 'docs.threeD.advCalloutTitle' })}
+      >
+        <p style={{ margin: 0 }}>
+          {intl.formatMessage({ id: 'docs.threeD.advCalloutBody' })}
+        </p>
+      </Callout>
+
+      <div className="docs-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: 170 }}>
+                {intl.formatMessage({ id: 'docs.threeD.colModelId' })}
+              </th>
+              <th style={{ width: 150 }}>
+                {intl.formatMessage({ id: 'docs.threeD.colCapability' })}
+              </th>
+              <th>{intl.formatMessage({ id: 'docs.threeD.colDesc' })}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>hy-3d-profile</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advProfileCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advProfileDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-texture</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advTextureCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advTextureDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-reduceface</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advReduceCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advReduceDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-part</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advPartCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advPartDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-uv</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advUvCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advUvDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-motion</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advMotionCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advMotionDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-rigging</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advRiggingCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advRiggingDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>hy-3d-convert</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advConvertCap' })}</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advConvertDesc' })}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>{intl.formatMessage({ id: 'docs.threeD.advInputFieldsHeading' })}</h3>
+      <div className="docs-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: 200 }}>
+                {intl.formatMessage({ id: 'docs.threeD.colField' })}
+              </th>
+              <th style={{ width: 110 }}>
+                {intl.formatMessage({ id: 'docs.threeD.colType' })}
+              </th>
+              <th>{intl.formatMessage({ id: 'docs.threeD.colDesc' })}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>input_model_url</code>
+              </td>
+              <td>string</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advFieldModelUrlDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>input_model_type</code>
+              </td>
+              <td>string</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advFieldModelTypeDesc' })}</td>
+            </tr>
+            <tr>
+              <td>
+                <code>input_model_asset_id</code>
+              </td>
+              <td>number</td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.advFieldModelAssetDesc' })}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>{intl.formatMessage({ id: 'docs.threeD.advExamplesHeading' })}</h3>
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExProfile' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-profile",
+    "images": ["https://example.com/portrait.png"],
+    "parameters": { "template": "pingpong" }
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExTexture' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-texture",
+    "input_model_url": "https://example.com/mesh.glb",
+    "input_model_type": "GLB",
+    "prompt": "${intl.formatMessage({ id: 'docs.threeD.examplePromptCuteCat' })}",
+    "enable_pbr": true,
+    "parameters": { "model_version": "3.1" }
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExReduce' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-reduceface",
+    "input_model_url": "https://example.com/mesh.obj",
+    "input_model_type": "OBJ",
+    "parameters": { "polygon_type": "quadrilateral", "face_level": "medium" }
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExPart' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-part",
+    "input_model_url": "https://example.com/mesh.fbx",
+    "input_model_type": "FBX"
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExUv' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-uv",
+    "input_model_url": "https://example.com/mesh.glb",
+    "input_model_type": "GLB"
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExMotion' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-motion",
+    "prompt": "${intl.formatMessage({ id: 'docs.threeD.advExampleMotionPrompt' })}",
+    "parameters": { "duration": 6, "enable_mesh": true }
+  }'`}
+      />
+
+      <h4>{intl.formatMessage({ id: 'docs.threeD.advExRigging' })}</h4>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-rigging",
+    "input_model_url": "https://example.com/character.glb",
+    "input_model_type": "GLB",
+    "parameters": { "motion_type": 1 }
+  }'`}
+      />
+
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+          {intl.formatMessage({ id: 'docs.threeD.advParamsSummary' })}
+        </summary>
+        <div className="docs-table-wrap" style={{ marginTop: 10 }}>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 170 }}>
+                  {intl.formatMessage({ id: 'docs.threeD.colParam' })}
+                </th>
+                <th style={{ width: 150 }}>
+                  {intl.formatMessage({ id: 'docs.threeD.colApplicableModel' })}
+                </th>
+                <th style={{ width: 180 }}>
+                  {intl.formatMessage({ id: 'docs.threeD.colAllowedValues' })}
+                </th>
+                <th>{intl.formatMessage({ id: 'docs.threeD.colEffect' })}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>template</code>
+                </td>
+                <td>
+                  <code>hy-3d-profile</code>
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.valTemplateString' })}</td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamTemplate' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>model_version</code>
+                </td>
+                <td>
+                  <code>hy-3d-texture</code> / <code>hy-3d-part</code>
+                </td>
+                <td>
+                  <code>3.0</code> / <code>3.1</code>; <code>1.5</code>
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamModelVersion' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>polygon_type</code>
+                </td>
+                <td>
+                  <code>hy-3d-reduceface</code>
+                </td>
+                <td>
+                  <code>triangle</code> / <code>quadrilateral</code>
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamPolygonType' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>face_level</code>
+                </td>
+                <td>
+                  <code>hy-3d-reduceface</code>
+                </td>
+                <td>
+                  <code>high</code> / <code>medium</code> / <code>low</code>
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamFaceLevel' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>duration</code>
+                </td>
+                <td>
+                  <code>hy-3d-motion</code>
+                </td>
+                <td>
+                  {intl.formatMessage({ id: 'docs.threeD.valInteger' })} (1–12)
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamDuration' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>enable_mesh</code> / <code>enable_rewrite</code> /{' '}
+                  <code>enable_duration_est</code>
+                </td>
+                <td>
+                  <code>hy-3d-motion</code>
+                </td>
+                <td>
+                  <code>true</code> / <code>false</code>
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamMotionFlags' })}</td>
+              </tr>
+              <tr>
+                <td>
+                  <code>motion_type</code>
+                </td>
+                <td>
+                  <code>hy-3d-rigging</code>
+                </td>
+                <td>
+                  {intl.formatMessage({ id: 'docs.threeD.valInteger' })} (1–48)
+                </td>
+                <td>{intl.formatMessage({ id: 'docs.threeD.advParamMotionType' })}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+
+      <h3>{intl.formatMessage({ id: 'docs.threeD.advConvertHeading' })}</h3>
+      <p>
+        <code>POST {API_BASE}/3d/convert</code>{' '}
+        {intl.formatMessage({ id: 'docs.threeD.advConvertP' })}
+      </p>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/convert \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "hy-3d-convert",
+    "file_url": "https://example.com/mesh.glb",
+    "format": "STL"
+  }'`}
+      />
+      <p>{intl.formatMessage({ id: 'docs.threeD.advConvertResponseDesc' })}</p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "object": "3d.convert",
+  "model": "hy-3d-convert",
+  "format": "STL",
+  "result_url": "https://cdn.example.com/model3d/converted.stl",
+  "usage": {
+    "quota_cost": 200,
+    "usd_cost": "0.020000"
+  }
+}`}
+      />
+
       <h2>{intl.formatMessage({ id: 'docs.threeD.commonErrorsHeading' })}</h2>
       <div className="docs-table-wrap">
         <table>
@@ -700,7 +1076,7 @@ export default function DocThreeD() {
 
       <p>
         {intl.formatMessage({ id: 'docs.threeD.playgroundTip1' })}{' '}
-        <Link to="/console/playground">Playground</Link>{' '}
+        <Link to="/playground">Playground</Link>{' '}
         {intl.formatMessage({ id: 'docs.threeD.playgroundTip2' })}
       </p>
     </>

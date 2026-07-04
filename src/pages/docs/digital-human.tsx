@@ -382,7 +382,7 @@ export default function DocDigitalHuman() {
       <Callout type="info" title={intl.formatMessage({ id: 'docs.digitalHuman.calloutTryTitle' })}>
         <p style={{ margin: 0 }}>
           {intl.formatMessage({ id: 'docs.digitalHuman.try1' })}{' '}
-          <Link to="/console/playground">
+          <Link to="/playground">
             {intl.formatMessage({ id: 'docs.digitalHuman.tryPlaygroundLink' })}
           </Link>{' '}
           {intl.formatMessage({ id: 'docs.digitalHuman.try2' })}

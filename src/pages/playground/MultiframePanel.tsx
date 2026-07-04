@@ -26,10 +26,13 @@ import {
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import { t } from '@/utils/i18n';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_multiframe_last_task_v1';
 
@@ -117,9 +120,8 @@ function newKeyframe(): Keyframe {
 export default function MultiframePanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [resolution, setResolution] = useState<string>('720p');
   const [startImage, setStartImage] = useState<FrameImage>(null);
   const [keyframes, setKeyframes] = useState<Keyframe[]>([newKeyframe(), newKeyframe()]);
@@ -142,11 +144,6 @@ export default function MultiframePanel() {
         .map((m) => ({ value: m.name, label: m.display_name || m.name }));
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
-    });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
     });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
@@ -171,26 +168,10 @@ export default function MultiframePanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
-
-  // 上传一张图,返回 {url, assetId}。复用 EffectsPanel 的上传逻辑(public_url 优先,缺失再查详情)。
+  // 上传一张图,返回 {url, assetId}。走 key 鉴权的 playgroundUpload。
   const uploadImage = async (file: File): Promise<{ url: string; assetId: number }> => {
-    const uploaded = await assetApi.upload(file, { module: 'i2v_input', purpose: 'i2v_reference' });
-    if (uploaded.code !== 0 || !uploaded.data) {
-      throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.multiframe.uploadFailed' }));
-    }
-    let url = uploaded.data.public_url;
-    if (!url) {
-      const detail = await assetApi.detail(uploaded.data.id);
-      if (detail.code !== 0 || !detail.data?.url) {
-        throw new Error(detail.message || intl.formatMessage({ id: 'playground.multiframe.fetchAssetUrlFailed' }));
-      }
-      url = detail.data.url;
-    }
-    return { url: url!, assetId: uploaded.data.id };
+    const { url, id } = await playgroundUpload(file, apiKey, { module: 'i2v_input', purpose: 'i2v_reference' });
+    return { url, assetId: id };
   };
 
   const startUploadProps: UploadProps = {
@@ -261,11 +242,11 @@ export default function MultiframePanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -301,9 +282,7 @@ export default function MultiframePanel() {
 
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.multiframe.warnSelectModel' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.multiframe.warnCreateApiKey' }));
-    if (!tokenAllowsModel)
-      return message.warning(intl.formatMessage({ id: 'playground.multiframe.warnKeyModelLimited' }, { model: modelName }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
     if (!startImage) return message.warning(intl.formatMessage({ id: 'playground.multiframe.warnUploadStartFrame' }));
     if (keyframes.length < MIN_KEYFRAMES)
       return message.warning(intl.formatMessage({ id: 'playground.multiframe.warnMinKeyframes' }, { min: MIN_KEYFRAMES }));
@@ -332,7 +311,7 @@ export default function MultiframePanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -355,12 +334,12 @@ export default function MultiframePanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -391,7 +370,7 @@ export default function MultiframePanel() {
   const locked = !!isInFlight || submitting;
   const totalDuration = keyframes.reduce((sum, k) => sum + (k.duration || 0), 0);
   const canSubmit =
-    !!modelName && !!selectedToken && !!startImage && keyframes.every((k) => !!k.image) && !isInFlight;
+    !!modelName && !!apiKey && !!startImage && keyframes.every((k) => !!k.image) && !isInFlight;
 
   return (
     <div style={{ padding: '8px 8px 32px', maxWidth: 1120, margin: '0 auto' }}>
@@ -421,22 +400,7 @@ export default function MultiframePanel() {
                 notFoundContent={intl.formatMessage({ id: 'playground.multiframe.modelNotFound' })}
               />
             </div>
-            <div>
-              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.multiframe.apiKeyLabel' })}</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.multiframe.apiKeyPlaceholder' })}
-                options={tokens.map((tk) => ({ value: tk.id, label: `${tk.name} (${tk.key_prefix}***)` }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={locked}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.multiframe.keyModelLimitedInline' }, { model: modelName })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div>
               <div style={labelStyle}>{intl.formatMessage({ id: 'playground.multiframe.resolutionLabel' })}</div>
               <Select

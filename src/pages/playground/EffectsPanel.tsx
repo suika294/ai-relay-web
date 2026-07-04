@@ -25,9 +25,12 @@ import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
 import { t } from '@/utils/i18n';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_effects_last_task_v1';
 
@@ -182,9 +185,8 @@ function statusText(s: string): string {
 export default function EffectsPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [effectScene, setEffectScene] = useState<string>('squish');
   const [images, setImages] = useState<EffectImage[]>([]);
   const [duration, setDuration] = useState<number>(5);
@@ -211,11 +213,6 @@ export default function EffectsPanel() {
         .map((m) => ({ value: m.name, label: m.display_name || m.name }));
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
-    });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
     });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
@@ -246,11 +243,6 @@ export default function EffectsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectScene]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
-
   const removeImage = (uid: string) => setImages((prev) => prev.filter((x) => x.uid !== uid));
 
   const uploadProps: UploadProps = {
@@ -273,19 +265,7 @@ export default function EffectsPanel() {
       setUploading(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, { module: 'i2v_input', purpose: 'i2v_reference' });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.effects.upload.failed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.effects.upload.fetchUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
-        const assetID = uploaded.data.id;
+        const { url, id: assetID } = await playgroundUpload(f, apiKey, { module: 'i2v_input', purpose: 'i2v_reference' });
         setImages((prev) => {
           if (prev.length >= def.count || prev.some((x) => x.url === url)) return prev;
           return [
@@ -293,13 +273,13 @@ export default function EffectsPanel() {
             {
               uid: `asset-${assetID}-${Date.now()}`,
               assetId: assetID,
-              url: url!,
+              url,
               name: f.name || intl.formatMessage({ id: 'playground.effects.portrait' }),
             },
           ];
         });
         message.success(intl.formatMessage({ id: 'playground.effects.upload.added' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.effects.upload.failed' }));
         onError?.(e);
@@ -328,11 +308,11 @@ export default function EffectsPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -368,11 +348,7 @@ export default function EffectsPanel() {
 
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.effects.warn.selectModel' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.effects.warn.createKey' }));
-    if (!tokenAllowsModel)
-      return message.warning(
-        intl.formatMessage({ id: 'playground.effects.warn.keyRestricted' }, { model: modelName }),
-      );
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
     if (images.length !== def.count) {
       return message.warning(
         intl.formatMessage(
@@ -401,7 +377,7 @@ export default function EffectsPanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -424,12 +400,12 @@ export default function EffectsPanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -487,22 +463,7 @@ export default function EffectsPanel() {
                 notFoundContent={intl.formatMessage({ id: 'playground.effects.notFound.model' })}
               />
             </div>
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.effects.placeholder.key' })}
-                options={tokens.map((t) => ({ value: t.id, label: `${t.name} (${t.key_prefix}***)` }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={locked}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.effects.warn.keyRestricted' }, { model: modelName })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.effects.field.effect' })}</div>
@@ -603,7 +564,7 @@ export default function EffectsPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!modelName || !selectedToken || !!isInFlight || images.length !== def.count}
+              disabled={!modelName || !apiKey || !!isInFlight || images.length !== def.count}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.effects.btn.submitting' })

@@ -59,9 +59,12 @@ import {
 import type { UploadProps } from 'antd';
 import { useIntl } from '@umijs/max';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_virtualman_last_task_v1';
@@ -283,8 +286,7 @@ type VideoTask = {
 
 export default function VirtualmanPanel() {
   const intl = useIntl();
-  const [tokens, setTokens] = useState<API.Token[]>([]);
-  const [tokenId, setTokenId] = useState<number | undefined>(undefined);
+  const { apiKey } = usePlaygroundApiKey();
   const [enabledModels, setEnabledModels] = useState<Set<string>>(new Set());
 
   const [modelName, setModelName] = useState<string>('wan2.2-s2v');
@@ -344,11 +346,6 @@ export default function VirtualmanPanel() {
       });
       setEnabledModels(set);
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
     if (saved) {
@@ -372,8 +369,6 @@ export default function VirtualmanPanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-
   const startTimer = (createdAtSec?: number) => {
     if (elapsedTimerRef.current) window.clearInterval(elapsedTimerRef.current);
     const baseAt = createdAtSec ? createdAtSec * 1000 : Date.now();
@@ -395,11 +390,11 @@ export default function VirtualmanPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -474,7 +469,7 @@ export default function VirtualmanPanel() {
       setUploadingRef(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, {
+        const { url } = await playgroundUpload(f, apiKey, {
           module:
             kind === 'image'
               ? 'virtualman_photo'
@@ -483,20 +478,9 @@ export default function VirtualmanPanel() {
               : 'virtualman_audio',
           purpose: 'virtualman_reference',
         });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.virtualman.uploadFailed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.virtualman.fetchAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
         if (!isPublicHTTPURL(url)) {
           message.warning(intl.formatMessage({ id: 'playground.virtualman.needPublicAsset' }));
-          onSuccess?.(uploaded as any);
+          onSuccess?.({ url } as any);
           return;
         }
         if (onURL) onURL(url);
@@ -516,7 +500,7 @@ export default function VirtualmanPanel() {
             },
           ),
         );
-        onSuccess?.(uploaded as any);
+        onSuccess?.({ url } as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.virtualman.uploadFailed' }));
         onError?.(e);
@@ -527,8 +511,8 @@ export default function VirtualmanPanel() {
   });
 
   const onSubmit = async () => {
-    if (!selectedToken) {
-      message.warning(intl.formatMessage({ id: 'playground.virtualman.selectApiKeyFirst' }));
+    if (!apiKey) {
+      message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
       return;
     }
 
@@ -685,7 +669,7 @@ export default function VirtualmanPanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -706,11 +690,11 @@ export default function VirtualmanPanel() {
   };
 
   const onCancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -788,17 +772,8 @@ export default function VirtualmanPanel() {
   return (
     <div className="pg-virtualman">
       <Card size="small" className="pg-section">
-        <Space wrap size={[16, 12]}>
-          <Space>
-            <span className="pg-label">{intl.formatMessage({ id: 'playground.virtualman.apiKeyLabel' })}</span>
-            <Select
-              style={{ width: 240 }}
-              placeholder={intl.formatMessage({ id: 'playground.virtualman.selectApiKey' })}
-              value={tokenId}
-              onChange={(v) => setTokenId(v)}
-              options={tokens.map((tk) => ({ value: tk.id, label: tk.name || `Token #${tk.id}` }))}
-            />
-          </Space>
+        <Space wrap size={[16, 12]} align="end">
+          <ApiKeyField />
           <Space>
             <span className="pg-label">{intl.formatMessage({ id: 'playground.virtualman.modelLabel' })}</span>
             <Select
@@ -1315,7 +1290,7 @@ export default function VirtualmanPanel() {
 
       <Card size="small" className="pg-section">
         <Space>
-          <Button type="primary" icon={<SendOutlined />} loading={submitting} disabled={!selectedToken} onClick={onSubmit}>
+          <Button type="primary" icon={<SendOutlined />} loading={submitting} disabled={!apiKey} onClick={onSubmit}>
             {intl.formatMessage({ id: 'playground.virtualman.submitTask' })}
           </Button>
           {task && !isTerminal && (

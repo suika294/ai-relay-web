@@ -525,6 +525,30 @@
   padding: 96px 24px 56px;
   background: #fff;
 }
+/* 首屏容器:桌面端把 Hero + 推荐模型 作为一整屏(min-height:100vh)。
+   Hero 弹性撑高吃满上方空间(globe 更高、内容纵向居中),推荐模型自然高度坐到底部
+   (靠近折叠线、完整可见),下方深色滚动叙事场景从折叠线以下才开始。
+   移动端不强制一屏,自然堆叠。 */
+@media (min-width: 901px) {
+  .home-firstscreen {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  /* Hero 撑满推荐区之上的全部空间,内容纵向居中(globe/文案不再挤在顶部)。
+     用 flex-direction:column + justify-center 只做纵向居中,不改动 hero-inner 原有的横向 grid 布局。 */
+  .home-firstscreen .home-hero {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  /* 推荐模型:自然高度,坐在首屏底部,留点呼吸避免贴边/被裁 */
+  .home-firstscreen .featured-section {
+    flex: 0 0 auto;
+    padding-bottom: 40px;
+  }
+}
 .home-hero--with-banner::after {
   content: "";
   position: absolute;
@@ -726,6 +750,8 @@ a.hero-carousel-slide {
   font-size: 14px;
 }
 .featured-card {
+  position: relative;
+  overflow: hidden;
   background: var(--mq-glass);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
@@ -774,6 +800,31 @@ a.hero-carousel-slide {
   background: rgba(255, 255, 255, 0.82);
   border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+/* 海外 / 全球版模型:卡片左上角斜角色块 + 地球图标 */
+.featured-globe-badge {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50px;
+  height: 50px;
+  z-index: 3;
+  pointer-events: none;
+}
+.featured-globe-badge::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #2f7bff 0%, #00c2d6 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+.featured-globe-badge > .anticon {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
 }
 .featured-card-titles {
   flex: 1;
@@ -3885,4 +3936,344 @@ a.hero-carousel-slide {
 .generation-showcase-actions button.is-active:hover {
   color: #fff;
   background: var(--mq-gradient, linear-gradient(135deg, #3b82f6, #58d1ff));
+}
+
+/* =====================================================================
+   首页产品功能区 —— 整页滚动叙事(参考 AETHER)。
+   三个模态各一屏「钉住 → 下一屏覆盖」的场景 + 入场揭幕:
+   视频圆形揭幕(clip-path circle)/ 图片视差漂移 / 图块交错渐入(pop-in)/ 图片缓慢缩放(Ken Burns)。
+   全部为新增样式,刻意用 .showcase-narrative / .showcase-scene 新类,不复用旧的一屏
+   tab 切换器外壳(.generation-showcase-section / -sticky / -body,已不再被渲染)。
+   仅复用叶子级 .generation-demo-* / .wave-audio-* / .generation-showcase-stats|actions|cta-row。
+   ===================================================================== */
+
+/* 外层:普通流,不钉高、不裁剪(区别于旧 .generation-showcase-section) */
+.showcase-narrative {
+  position: relative;
+  width: 100%;
+}
+.showcase-narrative-head {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 56px 24px 12px;
+  text-align: center;
+}
+/* 头部标题落在浅色页面底上,用深色墨(白色会不可见) */
+.showcase-narrative-head .ant-typography {
+  color: var(--mq-ink, #1a1c1c);
+}
+.showcase-scroll {
+  position: relative;
+}
+
+/* 单个沉浸场景:整屏视觉铺底 + 浅色柔光 scrim + 大标题居中压其上(对标参考 AETHER,浅色主题)。 */
+.showcase-scene {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3fa 100%);
+  color: var(--mq-ink, #1a1c1c);
+  --reveal: 1; /* 无 JS 时视频完整显示(渐进增强) */
+  --ty: 0px; /* 视差基准位移,由 JS 命令式写入 */
+}
+@supports (min-height: 100dvh) {
+  .showcase-scene {
+    min-height: 100dvh;
+  }
+}
+
+/* 视觉铺底层:铺满整屏 */
+.showcase-scene-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+/* 柔光 scrim:中心白色柔光,保证居中深色标题可读,边缘露出视觉 */
+.showcase-scene-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 64% 60% at 50% 48%,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(255, 255, 255, 0.66) 38%,
+    rgba(255, 255, 255, 0.22) 68%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+/* 居中文案层:整屏居中,大标题压在视觉之上;进入视口淡入上浮 */
+.showcase-scene-copy {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 96px 24px 56px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(26px);
+  transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.showcase-scene-copy > * {
+  pointer-events: auto;
+}
+.showcase-scene.is-active .showcase-scene-copy {
+  opacity: 1;
+  transform: none;
+}
+.showcase-scene-copy h3 {
+  margin: 0;
+  color: var(--mq-ink, #1a1c1c);
+  font-size: clamp(34px, 5vw, 60px);
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  text-shadow: 0 2px 30px rgba(255, 255, 255, 0.7);
+}
+.showcase-scene-copy p {
+  margin: 0;
+  max-width: 620px;
+  color: rgba(26, 28, 28, 0.66);
+  font-size: clamp(15px, 1.3vw, 18px);
+  line-height: 1.65;
+}
+.showcase-scene-copy .generation-showcase-stats,
+.showcase-scene-copy .generation-showcase-cta-row {
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* ---------- 视频场景:整屏视频 + 圆形揭幕 ---------- */
+.showcase-videowrap {
+  position: absolute;
+  inset: 0;
+}
+.showcase-fullvideo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #0b1018;
+  /* 圆形揭幕:随滚动从中心张开。16:9 整屏在半径 ≈71% 时即完全覆盖,故用 75%
+     (而非之前的 120%,否则 reveal 才到 0.6 就全开了 → 帘幕拉太快)。 */
+  clip-path: circle(calc(var(--reveal) * 75%) at 50% 50%);
+}
+.showcase-videowrap.is-portrait .showcase-fullvideo {
+  object-fit: contain;
+}
+/* 视频控件层:提到最上,放角落/底部,不挡中间标题 */
+.showcase-video-controls {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.showcase-video-controls > * {
+  pointer-events: auto;
+}
+.showcase-video-controls .generation-demo-sound-btn {
+  top: 92px;
+  right: 24px;
+}
+.showcase-video-controls .generation-demo-model-badge {
+  top: 92px;
+  left: 24px;
+}
+.showcase-video-controls .generation-demo-thumbs {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100% - 48px));
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* ---------- 图像场景:图片钉在画面中 + 随滚动漂移(不同速度视差)+ 淡入淡出(对标参考 vision) ---------- */
+/* 场景做高给出滚动行程;overflow 必须 visible,否则内部 sticky 钉不住。 */
+.showcase-scene--image {
+  min-height: 180vh;
+  overflow: visible;
+}
+/* 钉住层:sticky 钉住一屏,图片/标题都在其中;overflow hidden 裁掉漂移出界的图片 */
+.showcase-pin {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+@supports (height: 100dvh) {
+  .showcase-pin {
+    height: 100dvh;
+  }
+}
+.showcase-floaters {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+/* 单张浮层图:绝对定位(位置由行内预设),随滚动漂移(--ty × 各自 --pll)+ 淡入淡出(--vis) */
+.showcase-floater {
+  position: absolute;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 26px 64px rgba(20, 30, 60, 0.2);
+  opacity: var(--vis, 1);
+  transform: translateY(calc(var(--ty, 0px) * var(--pll, 0.2)));
+  will-change: transform, opacity;
+}
+.showcase-floater img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+/* 图像场景居中标题:透明度跟随 --vis 一起淡入淡出(压过 base 把它固定为 1 的 is-active 规则) */
+.showcase-scene--image .showcase-scene-copy,
+.showcase-scene--image.is-active .showcase-scene-copy {
+  opacity: var(--vis, 1);
+  transform: none;
+  transition: opacity 0.15s linear;
+}
+
+/* ---------- 数智人场景:标题在上 + 卡片网格在下(可交互,不做整屏覆盖) ---------- */
+.showcase-scene--media {
+  display: flex;
+  flex-direction: column;
+}
+.showcase-scene--media .showcase-scene-copy {
+  position: relative;
+  inset: auto;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  padding: 96px 24px 6px;
+}
+.showcase-scene-mediagrid {
+  position: relative;
+  z-index: 2;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 100%;
+  padding: 12px 24px 56px;
+}
+.showcase-scene-mediagrid > * {
+  width: 100%;
+  max-width: 1100px;
+}
+
+/* 空素材:柔和光斑占位 */
+.showcase-emptybg {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    58% 58% at 50% 42%,
+    rgba(88, 209, 255, 0.14),
+    transparent 70%
+  );
+}
+
+/* ---------- 交错渐入(pop-in):图块/卡片进入视口后依次淡入上浮 ---------- */
+.showcase-scene .pop-in {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: calc(var(--i, 0) * 0.05s);
+}
+.showcase-scene.is-active .pop-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---------- 移动端(≤900px):沿用沉浸叠层,只缩小尺寸、关掉视差/缩放(数智人本就是堆叠) ---------- */
+@media (max-width: 900px) {
+  .showcase-scene {
+    min-height: 88vh;
+  }
+  .showcase-scene--media,
+  .showcase-scene--image {
+    min-height: 0;
+  }
+  .showcase-scene-copy {
+    padding: 80px 18px 40px;
+  }
+  .showcase-scene--image .showcase-scene-copy,
+  .showcase-scene--media .showcase-scene-copy {
+    padding: 40px 16px 8px;
+  }
+  /* 图像场景移动端:取消钉住/漂移/淡入淡出,图片单列平铺 + 标题在上 */
+  .showcase-pin {
+    position: static;
+    height: auto;
+    overflow: visible;
+  }
+  .showcase-scene--image .showcase-scene-scrim {
+    display: none;
+  }
+  .showcase-scene--image .showcase-scene-copy,
+  .showcase-scene--image.is-active .showcase-scene-copy {
+    position: relative;
+    padding: 40px 16px 12px;
+    opacity: 1;
+    transform: none;
+  }
+  .showcase-floaters {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 0 16px 24px;
+  }
+  .showcase-floater {
+    position: relative !important;
+    left: auto !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: auto !important;
+    width: auto !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .showcase-video-controls .generation-demo-sound-btn {
+    top: 76px;
+    right: 14px;
+  }
+  .showcase-video-controls .generation-demo-model-badge {
+    top: 76px;
+    left: 14px;
+  }
+  .showcase-video-controls .generation-demo-thumbs {
+    bottom: 16px;
+  }
+}
+
+/* ---------- 无障碍:减少动态效果时,关掉揭幕/视差/缩放/交错,内容静态呈现 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .showcase-fullvideo {
+    clip-path: none;
+  }
+  .showcase-scene-copy,
+  .showcase-scene.is-active .showcase-scene-copy,
+  .showcase-scene .pop-in,
+  .showcase-scene.is-active .pop-in {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .showcase-floater {
+    opacity: 1;
+    transform: none;
+  }
 }

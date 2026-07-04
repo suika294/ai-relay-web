@@ -25,11 +25,14 @@ import type { UploadProps } from 'antd';
 import { useIntl } from '@umijs/max';
 import { useEffect, useRef, useState } from 'react';
 import { t } from '@/utils/i18n';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
-const LS_LAST_TASK = 'playground_virtual_tryon_last_task_v1';
+const LS_LAST_TASK = 'playground_virtual_tryon_last_task_v2';
 
 function extractErrMsg(raw: string, httpStatus: number): string {
   try {
@@ -38,6 +41,21 @@ function extractErrMsg(raw: string, httpStatus: number): string {
   } catch {
     return raw ? raw.slice(0, 500) : `HTTP ${httpStatus}`;
   }
+}
+
+// isSupportedTryOnImage 判定上传文件是否为腾讯换装稳定支持的图片格式(JPG/PNG/WEBP/BMP)。
+// HEIC/AVIF/TIFF/GIF 等先拦下,提示用户转成 JPG/PNG。
+function isSupportedTryOnImage(file: { name?: string; type?: string }): boolean {
+  const name = (file.name || '').toLowerCase();
+  const type = (file.type || '').toLowerCase();
+  const badExt = ['.heic', '.heif', '.avif', '.tif', '.tiff', '.gif'];
+  if (badExt.some((e) => name.endsWith(e))) return false;
+  const okTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/bmp'];
+  // file.type 为空时(部分浏览器对 HEIC 不给 MIME)只靠扩展名兜底:必须是已知良好扩展名。
+  if (!type) {
+    return ['.jpg', '.jpeg', '.png', '.webp', '.bmp'].some((e) => name.endsWith(e));
+  }
+  return okTypes.includes(type);
 }
 
 function isTransientPollError(status: number, msg: string): boolean {
@@ -96,15 +114,20 @@ function statusText(s: string): string {
 export default function VirtualTryOnPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [human, setHuman] = useState<TryOnImage | null>(null);
-  const [cloth, setCloth] = useState<TryOnImage | null>(null);
+  const [cloth, setCloth] = useState<TryOnImage | null>(null); // 上衣
+  const [clothLower, setClothLower] = useState<TryOnImage | null>(null); // 下装
+  const [clothDress, setClothDress] = useState<TryOnImage | null>(null); // 连衣裙(与上衣/下装互斥)
+  const hasUpperLower = !!cloth || !!clothLower;
+  const hasDress = !!clothDress;
 
   const [submitting, setSubmitting] = useState(false);
   const [uploadingHuman, setUploadingHuman] = useState(false);
   const [uploadingCloth, setUploadingCloth] = useState(false);
+  const [uploadingClothLower, setUploadingClothLower] = useState(false);
+  const [uploadingClothDress, setUploadingClothDress] = useState(false);
   const [polling, setPolling] = useState(false);
   const [task, setTask] = useState<VideoTask | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -115,17 +138,12 @@ export default function VirtualTryOnPanel() {
 
   useEffect(() => {
     systemApi.models().then((res) => {
-      // 虚拟试穿仅可灵 kolors-virtual-try-on 支持,按模型名过滤,避免误选其它视频厂商。
+      // 换装走腾讯云 aiart ChangeClothes(同步图片任务),按模型名过滤,避免误选其它图片厂商。
       const list = ((res.data as any[]) || [])
-        .filter((m) => m.type === 'video' && m.enabled !== false && /kolors-virtual-try-on/i.test(m.name))
+        .filter((m) => m.type === 'image' && m.enabled !== false && /change-clothes/i.test(m.name))
         .map((m) => ({ value: m.name, label: m.display_name || m.name }));
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
-    });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
     });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
@@ -150,21 +168,22 @@ export default function VirtualTryOnPanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
-
   const makeUploadProps = (
     setImage: (img: TryOnImage | null) => void,
     setUploading: (b: boolean) => void,
     label: string,
   ): UploadProps => ({
-    accept: 'image/*',
+    accept: '.jpg,.jpeg,.png,.webp,.bmp,image/jpeg,image/png,image/webp,image/bmp',
     showUploadList: false,
     beforeUpload: (file) => {
       if (file.type && !file.type.startsWith('image/')) {
         message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.uploadImageOnly' }));
+        return Upload.LIST_IGNORE;
+      }
+      // 腾讯换装上游只稳定支持 JPG/PNG(及 WEBP/BMP);HEIC/AVIF/TIFF/GIF 等先拦下,
+      // 避免传上去再被上游拒。按扩展名 + MIME 双重判断(HEIC 在部分浏览器 file.type 为空)。
+      if (!isSupportedTryOnImage(file)) {
+        message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.uploadFormatWarn' }));
         return Upload.LIST_IGNORE;
       }
       return true;
@@ -173,22 +192,10 @@ export default function VirtualTryOnPanel() {
       setUploading(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, { module: 'i2v_input', purpose: 'i2v_reference' });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.virtualTryOn.uploadFailed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.virtualTryOn.getAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
-        const assetID = uploaded.data.id;
-        setImage({ uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url: url!, name: f.name || label });
+        const { url, id: assetID } = await playgroundUpload(f, apiKey, { module: 'i2v_input', purpose: 'i2v_reference' });
+        setImage({ uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url, name: f.name || label });
         message.success(intl.formatMessage({ id: 'playground.virtualTryOn.imageAdded' }, { label }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.virtualTryOn.uploadFailed' }));
         onError?.(e);
@@ -217,11 +224,11 @@ export default function VirtualTryOnPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
-      const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+      const res = await fetch(apiURL(`/v1/images/generations/${id}`), {
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -257,13 +264,9 @@ export default function VirtualTryOnPanel() {
 
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.selectModelWarn' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.createKeyWarn' }));
-    if (!tokenAllowsModel)
-      return message.warning(
-        intl.formatMessage({ id: 'playground.virtualTryOn.keyModelRestricted' }, { model: modelName }),
-      );
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
     if (!human) return message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.uploadHumanWarn' }));
-    if (!cloth) return message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.uploadClothWarn' }));
+    if (!cloth && !clothLower && !clothDress) return message.warning(intl.formatMessage({ id: 'playground.virtualTryOn.uploadClothWarn' }));
 
     setSubmitting(true);
     setErrMsg(null);
@@ -272,18 +275,38 @@ export default function VirtualTryOnPanel() {
     stopTimer();
 
     try {
-      // 人像走 first_frame_image(复用统一外形的图片归一化),服装走 cloth_image。
+      // 换装走图片管线:images[0]=模特图、其后是服装图;clothes_type 由「放了哪个格子」自动推导:
+      //   只放上衣 → Upper-body;只放下装 → Lower-body;上衣+下装都放 → Upper-Lower(后端链式两次换装)。
+      // image_asset_ids 与 images 同序对齐,便于后端把上传素材转成公网可达 URL。
+      let clothesType: string;
+      let tiles: TryOnImage[];
+      if (clothDress) {
+        // 连衣裙单件,与上衣/下装互斥(UI 已禁用对方)。
+        clothesType = 'Dress';
+        tiles = [human, clothDress];
+      } else if (cloth && clothLower) {
+        clothesType = 'Upper-Lower';
+        tiles = [human, cloth, clothLower];
+      } else if (cloth) {
+        clothesType = 'Upper-body';
+        tiles = [human, cloth];
+      } else {
+        clothesType = 'Lower-body';
+        tiles = [human, clothLower!];
+      }
       const body: any = {
         model: modelName,
-        first_frame_image: human.url,
-        cloth_image: cloth.url,
+        images: tiles.map((x) => x.url),
+        clothes_type: clothesType,
       };
+      const assetIds = tiles.map((x) => x.assetId || 0);
+      if (assetIds.some((id) => id > 0)) body.image_asset_ids = assetIds;
 
-      const res = await fetch(apiURL('/v1/videos/generations'), {
+      const res = await fetch(apiURL('/v1/images/generations/async'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -306,12 +329,12 @@ export default function VirtualTryOnPanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
-      const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
+      const res = await fetch(apiURL(`/v1/images/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -347,6 +370,7 @@ export default function VirtualTryOnPanel() {
     uploading: boolean,
     setUploading: (b: boolean) => void,
     label: string,
+    extraDisabled = false,
   ) => (
     <div style={{ flex: 1 }}>
       <div style={labelStyle}>{label}</div>
@@ -371,8 +395,8 @@ export default function VirtualTryOnPanel() {
           />
         </div>
       ) : (
-        <Upload {...makeUploadProps(setImage, setUploading, label)} disabled={locked}>
-          <Button icon={<UploadOutlined />} loading={uploading} disabled={locked} style={{ width: 120, height: 120 }}>
+        <Upload {...makeUploadProps(setImage, setUploading, label)} disabled={locked || extraDisabled}>
+          <Button icon={<UploadOutlined />} loading={uploading} disabled={locked || extraDisabled} style={{ width: 120, height: 120 }}>
             {intl.formatMessage({ id: 'playground.virtualTryOn.uploadLabel' }, { label })}
           </Button>
         </Upload>
@@ -391,7 +415,7 @@ export default function VirtualTryOnPanel() {
               <SkinOutlined /> {intl.formatMessage({ id: 'playground.virtualTryOn.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/images/generations</span>}
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
@@ -408,25 +432,15 @@ export default function VirtualTryOnPanel() {
                 notFoundContent={intl.formatMessage({ id: 'playground.virtualTryOn.noModelAvailable' })}
               />
             </div>
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.virtualTryOn.keyPlaceholder' })}
-                options={tokens.map((t) => ({ value: t.id, label: `${t.name} (${t.key_prefix}***)` }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={locked}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.virtualTryOn.keyModelRestricted' }, { model: modelName })}
-                </div>
-              )}
+            <ApiKeyField />
+            <div style={{ color: '#888', fontSize: 12, marginTop: -4 }}>
+              {intl.formatMessage({ id: 'playground.virtualTryOn.slotsHint' })}
             </div>
-            <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
               {slot(human, setHuman, uploadingHuman, setUploadingHuman, intl.formatMessage({ id: 'playground.virtualTryOn.humanImage' }))}
-              {slot(cloth, setCloth, uploadingCloth, setUploadingCloth, intl.formatMessage({ id: 'playground.virtualTryOn.clothImage' }))}
+              {slot(cloth, setCloth, uploadingCloth, setUploadingCloth, intl.formatMessage({ id: 'playground.virtualTryOn.upperImage' }), hasDress)}
+              {slot(clothLower, setClothLower, uploadingClothLower, setUploadingClothLower, intl.formatMessage({ id: 'playground.virtualTryOn.lowerImage' }), hasDress)}
+              {slot(clothDress, setClothDress, uploadingClothDress, setUploadingClothDress, intl.formatMessage({ id: 'playground.virtualTryOn.dressImage' }), hasUpperLower)}
             </div>
             <Button
               type="primary"
@@ -435,7 +449,7 @@ export default function VirtualTryOnPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!modelName || !selectedToken || !!isInFlight || !human || !cloth}
+              disabled={!modelName || !apiKey || !!isInFlight || !human || (!cloth && !clothLower && !clothDress)}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.virtualTryOn.submitting' })

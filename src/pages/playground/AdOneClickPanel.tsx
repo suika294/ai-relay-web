@@ -28,10 +28,13 @@ import {
 import type { UploadProps } from 'antd';
 import { useIntl } from '@umijs/max';
 import { useEffect, useRef, useState } from 'react';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_ad_one_click_last_task_v1';
 
@@ -131,8 +134,7 @@ function statusText(s: string): string {
 export default function AdOneClickPanel() {
   const intl = useIntl();
   const [hasModel, setHasModel] = useState<boolean>(true);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
-  const [tokenId, setTokenId] = useState<number>();
+  const { apiKey } = usePlaygroundApiKey();
   const [images, setImages] = useState<AdImage[]>([]);
   const [prompt, setPrompt] = useState<string>('');
   const [duration, setDuration] = useState<number>(15);
@@ -166,11 +168,6 @@ export default function AdOneClickPanel() {
       const list = (res.data as any[]) || [];
       setHasModel(list.some((m) => m.name === AD_MODEL && m.enabled !== false));
     });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
-    });
 
     const saved = localStorage.getItem(LS_LAST_TASK);
     if (saved) {
@@ -196,10 +193,6 @@ export default function AdOneClickPanel() {
     if (task) localStorage.setItem(LS_LAST_TASK, JSON.stringify(task));
   }, [task]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length || selectedToken.allowed_models.includes(AD_MODEL);
-
   const removeImage = (uid: string) => setImages((prev) => prev.filter((x) => x.uid !== uid));
 
   const uploadProps: UploadProps = {
@@ -222,28 +215,17 @@ export default function AdOneClickPanel() {
       setUploading(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, { module: 'i2v_input', purpose: 'i2v_reference' });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.adOneClick.uploadFailed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.adOneClick.fetchAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
-        const assetID = uploaded.data.id;
+        const { url, id } = await playgroundUpload(f, apiKey, { module: 'i2v_input', purpose: 'i2v_reference' });
+        const assetID = id;
         setImages((prev) => {
           if (prev.length >= MAX_IMAGES || prev.some((x) => x.url === url)) return prev;
           return [
             ...prev,
-            { uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url: url!, name: f.name || intl.formatMessage({ id: 'playground.adOneClick.imageDefaultName' }) },
+            { uid: `asset-${assetID}-${Date.now()}`, assetId: assetID, url: url, name: f.name || intl.formatMessage({ id: 'playground.adOneClick.imageDefaultName' }) },
           ];
         });
         message.success(intl.formatMessage({ id: 'playground.adOneClick.imageAdded' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.adOneClick.uploadFailed' }));
         onError?.(e);
@@ -272,11 +254,11 @@ export default function AdOneClickPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -312,10 +294,10 @@ export default function AdOneClickPanel() {
 
   // 轮询编辑/合成产生的子任务(独立于主成片)。
   const fetchChild = async (id: string) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -337,8 +319,7 @@ export default function AdOneClickPanel() {
 
   const submit = async () => {
     if (!hasModel) return message.warning(intl.formatMessage({ id: 'playground.adOneClick.modelNotFoundWarn' }, { model: AD_MODEL }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.adOneClick.createKeyFirst' }));
-    if (!tokenAllowsModel) return message.warning(intl.formatMessage({ id: 'playground.adOneClick.keyModelRestricted' }, { model: AD_MODEL }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
     if (images.length === 0) return message.warning(intl.formatMessage({ id: 'playground.adOneClick.uploadAtLeastOne' }));
 
     setSubmitting(true);
@@ -365,7 +346,7 @@ export default function AdOneClickPanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -389,12 +370,12 @@ export default function AdOneClickPanel() {
   };
 
   const cancel = async () => {
-    if (!task || !selectedToken) return;
+    if (!task || !apiKey) return;
     if (pollRef.current) window.clearTimeout(pollRef.current);
     try {
       const res = await fetch(apiURL(`/v1/videos/generations/${task.id}/cancel`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -422,11 +403,11 @@ export default function AdOneClickPanel() {
   };
 
   const loadSubtasks = async () => {
-    if (!mainTaskId || !selectedToken) return;
+    if (!mainTaskId || !apiKey) return;
     setLoadingSubs(true);
     try {
       const res = await fetch(apiURL(`/v1/videos/ad-one-click/${mainTaskId}/subtasks`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -442,7 +423,7 @@ export default function AdOneClickPanel() {
   };
 
   const submitEdit = async () => {
-    if (!mainTaskId || !selectedToken) return;
+    if (!mainTaskId || !apiKey) return;
     if (!editPrompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.adOneClick.editPromptRequired' }));
     setPosting(true);
     try {
@@ -450,7 +431,7 @@ export default function AdOneClickPanel() {
       if (editType === 'generate_video') body.storyboard_video_index = editIndex;
       const res = await fetch(apiURL(`/v1/videos/ad-one-click/${mainTaskId}/edit`), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${selectedToken.key}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
       });
       const text = await res.text();
@@ -500,22 +481,7 @@ export default function AdOneClickPanel() {
                 description={intl.formatMessage({ id: 'playground.adOneClick.modelNotFoundDesc' })}
               />
             )}
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.adOneClick.selectKey' })}
-                options={tokens.map((t) => ({ value: t.id, label: `${t.name} (${t.key_prefix}***)` }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={locked}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.adOneClick.keyModelRestricted' }, { model: AD_MODEL })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <div style={{ flex: 1, minWidth: 120 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.adOneClick.durationLabel' })}</div>
@@ -618,7 +584,7 @@ export default function AdOneClickPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!hasModel || !selectedToken || !!isInFlight || images.length === 0}
+              disabled={!hasModel || !apiKey || !!isInFlight || images.length === 0}
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.adOneClick.submitting' })

@@ -10,13 +10,14 @@
 import { Alert, Button, Card, Empty, Form, Input, Popconfirm, Radio, Select, Space, Spin, Table, Tag, Upload, message } from 'antd';
 import type { UploadProps } from 'antd';
 import { CloudUploadOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useIntl } from '@umijs/max';
 
-import { tokenApi } from '@/services/api';
 import { apiURL } from '@/utils/request';
 import { t } from '@/utils/i18n';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
 
 const LS_PROVIDER = 'playground_voice_clone_provider_v1';
 
@@ -124,8 +125,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function VoiceClonePanel() {
   const intl = useIntl();
-  const [tokens, setTokens] = useState<API.Token[]>([]);
-  const [tokenId, setTokenId] = useState<number | undefined>();
+  const { apiKey } = usePlaygroundApiKey();
   const [provider, setProvider] = useState<ProviderType>(() => (localStorage.getItem(LS_PROVIDER) as ProviderType) || 'vidu');
   const [list, setList] = useState<VoiceClone[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,26 +139,17 @@ export default function VoiceClonePanel() {
   const pollRef = useRef<number | null>(null);
 
   const meta = PROVIDERS[provider];
-  const selectedToken = useMemo(() => tokens.find((t) => t.id === tokenId), [tokens, tokenId]);
 
   useEffect(() => {
     localStorage.setItem(LS_PROVIDER, provider);
   }, [provider]);
 
-  useEffect(() => {
-    tokenApi.list().then((res) => {
-      const ts = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(ts);
-      if (ts.length > 0) setTokenId((prev) => prev ?? ts[0].id);
-    });
-  }, []);
-
   const fetchList = useCallback(async () => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     setLoading(true);
     try {
       const res = await fetch(apiURL('/v1/audio/voice_clones'), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.error?.message || `HTTP ${res.status}`);
@@ -168,7 +159,7 @@ export default function VoiceClonePanel() {
     } finally {
       setLoading(false);
     }
-  }, [selectedToken]);
+  }, [apiKey]);
 
   useEffect(() => {
     fetchList();
@@ -181,14 +172,14 @@ export default function VoiceClonePanel() {
       pollRef.current = null;
     }
     const hasNonTerminal = list.some((v) => v.status === 'queued' || v.status === 'training');
-    if (!hasNonTerminal || !selectedToken) return;
+    if (!hasNonTerminal || !apiKey) return;
     pollRef.current = window.setTimeout(async () => {
       const targets = list.filter((v) => v.status === 'queued' || v.status === 'training');
       const updates = await Promise.all(
         targets.map(async (v) => {
           try {
             const r = await fetch(apiURL(`/v1/audio/voice_clones/${v.id}?refresh=true`), {
-              headers: { Authorization: `Bearer ${selectedToken.key}` },
+              headers: { Authorization: `Bearer ${apiKey}` },
             });
             if (!r.ok) return null;
             return (await r.json()) as VoiceClone;
@@ -205,7 +196,7 @@ export default function VoiceClonePanel() {
         return Array.from(map.values()).sort((a, b) => b.id - a.id);
       });
     }, 10000);
-  }, [list, selectedToken]);
+  }, [list, apiKey]);
 
   useEffect(() => {
     schedulePoll();
@@ -216,7 +207,7 @@ export default function VoiceClonePanel() {
 
   // 提交前本地校验(与后端规则对齐)。返回错误文案或 null。
   const validate = (): string | null => {
-    if (!selectedToken) return intl.formatMessage({ id: 'playground.voiceClone.valNoToken' });
+    if (!apiKey) return intl.formatMessage({ id: 'playground.index.fillKeyFirst' });
     if (!name.trim()) return intl.formatMessage({ id: 'playground.voiceClone.valNoName' });
     if (!fileRef.current) return intl.formatMessage({ id: 'playground.voiceClone.valNoFile' });
     const v = voiceID.trim();
@@ -253,7 +244,7 @@ export default function VoiceClonePanel() {
 
       const res = await fetch(apiURL('/v1/audio/voice_clones'), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken!.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
       });
       const body = await res.json();
@@ -275,11 +266,11 @@ export default function VoiceClonePanel() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     try {
       const res = await fetch(apiURL(`/v1/audio/voice_clones/${id}`), {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -293,11 +284,11 @@ export default function VoiceClonePanel() {
   };
 
   const handleManualRefresh = async (id: number) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     try {
       const res = await fetch(apiURL(`/v1/audio/voice_clones/${id}/refresh`), {
         method: 'POST',
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -326,11 +317,10 @@ export default function VoiceClonePanel() {
 
   return (
     <div className="pg-voice-clone">
-      {/* Token 选择 + provider 切换 */}
+      {/* API Key + provider 切换 */}
       <Card size="small" style={{ marginBottom: 12 }}>
-        <Space wrap>
-          <span>{intl.formatMessage({ id: 'playground.voiceClone.apiTokenLabel' })}</span>
-          <Select style={{ width: 220 }} placeholder={intl.formatMessage({ id: 'playground.voiceClone.selectTokenPlaceholder' })} value={tokenId} onChange={setTokenId} options={tokens.map((tk) => ({ value: tk.id, label: tk.name }))} />
+        <Space wrap align="end">
+          <ApiKeyField />
           <span style={{ marginLeft: 16 }}>{intl.formatMessage({ id: 'playground.voiceClone.providerLabel' })}</span>
           <Radio.Group
             value={provider}

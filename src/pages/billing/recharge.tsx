@@ -8,7 +8,7 @@ import {
   ProTable,
 } from '@ant-design/pro-components';
 import type { ActionType } from '@ant-design/pro-components';
-import { GiftOutlined, WalletOutlined } from '@ant-design/icons';
+import { DownloadOutlined, GiftOutlined, WalletOutlined } from '@ant-design/icons';
 import {
   Button,
   Descriptions,
@@ -26,10 +26,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
+import { downloadCSV } from '@/utils/download';
 
 export default function Recharge() {
   const intl = useIntl();
   const orderRef = useRef<ActionType>();
+  // 记住订单列表当前生效的筛选(时间窗),导出按钮据此导出"当前筛选"的全部订单。
+  const lastOrderFilters = useRef<Record<string, any>>({});
 
   // 订单 SummaryBar:与 ProTable 同源时间窗,每次 request 时与 listOrders 并行调。
   const [summary, setSummary] = useState<API.OrderSummary | null>(null);
@@ -216,6 +219,15 @@ export default function Recharge() {
           actionRef={orderRef}
           search={{ labelWidth: 'auto' }}
           ghost
+          toolBarRender={() => [
+            <Button
+              key="export"
+              icon={<DownloadOutlined />}
+              onClick={() => downloadCSV('/api/v1/user/recharge/orders/export', lastOrderFilters.current)}
+            >
+              {intl.formatMessage({ id: 'common.exportCsv' })}
+            </Button>,
+          ]}
           request={async (params) => {
             const filters = {
               page: params.current,
@@ -223,6 +235,7 @@ export default function Recharge() {
               since: params.since,
               until: params.until,
             };
+            lastOrderFilters.current = filters;
             setSummaryLoading(true);
             const [listRes, sumRes] = await Promise.all([
               billingApi.listOrders(filters),

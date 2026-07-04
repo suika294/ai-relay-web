@@ -39,6 +39,7 @@ export default {
   "home.index.mute": "Mute",
   "home.index.unmute": "Unmute",
   "home.index.context": "context",
+  "home.index.globalEdition": "Overseas / Global edition",
   "home.index.generateKey": "Generate Key",
   "home.index.create": "Create",
   "home.index.heroTitleLine1": "One integration,",

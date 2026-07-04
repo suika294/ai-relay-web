@@ -19,9 +19,8 @@ import {
   VideoCameraOutlined,
 } from '@ant-design/icons';
 import { PageContainer } from '@ant-design/pro-components';
-import { Link, useIntl, useSearchParams } from '@umijs/max';
+import { useIntl, useSearchParams } from '@umijs/max';
 import {
-  Alert,
   Button,
   Empty,
   Input,
@@ -34,10 +33,14 @@ import {
   Tabs,
 } from 'antd';
 import { useEffect, useRef, useState } from 'react';
-import { systemApi, tokenApi } from '@/services/api';
+import PublicLayout from '@/layouts/PublicLayout';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import { apiURL } from '@/utils/request';
 import AdOneClickPanel from './AdOneClickPanel';
+import AigcMaterialPanel from './AigcMaterialPanel';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
 import EffectsPanel from './EffectsPanel';
 import GeneralOneClickPanel from './GeneralOneClickPanel';
 import ImagePanel from './ImagePanel';
@@ -191,11 +194,10 @@ function truncate(s: string, n: number) {
 function ChatPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
 
   // 配置
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
   const [system, setSystem] = useState(() =>
     intl.formatMessage({ id: 'playground.index.defaultSystemPrompt' }),
   );
@@ -316,19 +318,11 @@ function ChatPanel() {
         setModelName((prev) => (prev && list.some((m) => m.value === prev) ? prev : list[0].value));
       }
     });
-    tokenApi.list().then((res) => {
-      const list = (res.data as API.Token[]) || [];
-      const active = list.filter((t) => t.status === 1);
-      setTokens(active);
-      if (active.length > 0) setTokenId((prev) => prev ?? active[0].id);
-    });
   }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
-
-  const selectedToken = tokens.find((t) => t.id === tokenId);
 
   const updateCurrent = (updater: (s: Session) => Session) => {
     setSessions((prev) => {
@@ -450,8 +444,8 @@ function ChatPanel() {
       message.warning(intl.formatMessage({ id: 'playground.index.selectModelFirst' }));
       return;
     }
-    if (!selectedToken) {
-      message.warning(intl.formatMessage({ id: 'playground.index.createKeyFirst' }));
+    if (!apiKey) {
+      message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
       return;
     }
 
@@ -498,7 +492,7 @@ function ChatPanel() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
         signal: ctrl.signal,
@@ -819,21 +813,6 @@ function ChatPanel() {
         {/* 右：设置 */}
         <div className="pg-settings">
           <h4>{intl.formatMessage({ id: 'playground.index.settings' })}</h4>
-          {tokens.length === 0 && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message={
-                <span>
-                  {intl.formatMessage({ id: 'playground.index.noKeyYet' })}
-                  <Link to="/console/tokens">
-                    {intl.formatMessage({ id: 'playground.index.goCreate' })}
-                  </Link>
-                </span>
-              }
-            />
-          )}
 
           <Space direction="vertical" style={{ width: '100%' }}>
             <div>
@@ -851,19 +830,7 @@ function ChatPanel() {
               />
             </div>
 
-            <div>
-              <div style={{ fontSize: 12, color: '#666' }}>API Key</div>
-              <Select
-                value={tokenId}
-                onChange={setTokenId}
-                options={tokens.map((tk) => ({
-                  value: tk.id,
-                  label: `${tk.name || intl.formatMessage({ id: 'playground.index.untitled' })} (${tk.key_prefix}***)`,
-                }))}
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.index.selectToken' })}
-              />
-            </div>
+            <ApiKeyField />
 
             <div>
               <div style={{ fontSize: 12, color: '#666' }}>System Prompt</div>
@@ -1042,6 +1009,15 @@ export default function Playground() {
             children: <VoiceClonePanel />,
           },
           {
+            key: 'aigc-material',
+            label: (
+              <span>
+                <UserOutlined /> {intl.formatMessage({ id: 'playground.index.tabAigcMaterial' })}
+              </span>
+            ),
+            children: <AigcMaterialPanel />,
+          },
+          {
             key: 'virtualman',
             label: (
               <span>
@@ -1053,16 +1029,19 @@ export default function Playground() {
   ];
 
   return (
-    <PageContainer
-      title="Playground"
-      subTitle={intl.formatMessage({ id: 'playground.index.subTitle' })}
-    >
-      <Tabs
-        activeKey={activeTab}
-        onChange={changeTab}
-        items={tabItems.filter((t) => !HIDDEN_TABS.has(t.key))}
-      />
-    </PageContainer>
+    <PublicLayout hideFooter>
+      <PageContainer
+        title="Playground"
+        subTitle={intl.formatMessage({ id: 'playground.index.subTitle' })}
+        style={{ maxWidth: 1400, margin: '0 auto' }}
+      >
+        <Tabs
+          activeKey={activeTab}
+          onChange={changeTab}
+          items={tabItems.filter((t) => !HIDDEN_TABS.has(t.key))}
+        />
+      </PageContainer>
+    </PublicLayout>
   );
 }
 

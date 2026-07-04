@@ -1,10 +1,12 @@
 import { PageContainer, ProTable } from '@ant-design/pro-components';
-import { Tag } from 'antd';
-import { useState } from 'react';
+import { DownloadOutlined } from '@ant-design/icons';
+import { Button, Tag } from 'antd';
+import { useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
 import { t } from '@/utils/i18n';
 import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
+import { downloadCSV } from '@/utils/download';
 
 const typeMap: Record<string, { text: string; color: string }> = {
   recharge: { text: t('billing.records.typeRecharge'), color: 'green' },
@@ -60,6 +62,8 @@ export default function Records() {
   const intl = useIntl();
   const [summary, setSummary] = useState<API.RecordsSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  // 记住列表当前生效的筛选(类型 + 时间窗),导出按钮据此导出"当前筛选"的全部流水。
+  const lastFilters = useRef<Record<string, any>>({});
 
   return (
     <PageContainer title={intl.formatMessage({ id: 'billing.records.title' })}>
@@ -67,6 +71,15 @@ export default function Records() {
       <ProTable<API.BillingRecord>
         rowKey="id"
         search={{ labelWidth: 'auto' }}
+        toolBarRender={() => [
+          <Button
+            key="export"
+            icon={<DownloadOutlined />}
+            onClick={() => downloadCSV('/api/v1/user/billing/records/export', lastFilters.current)}
+          >
+            {intl.formatMessage({ id: 'common.exportCsv' })}
+          </Button>,
+        ]}
         request={async (params) => {
           const filters = {
             page: params.current,
@@ -75,6 +88,7 @@ export default function Records() {
             since: params.since,
             until: params.until,
           };
+          lastFilters.current = filters;
           setSummaryLoading(true);
           const [listRes, sumRes] = await Promise.all([
             billingApi.records(filters),

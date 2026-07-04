@@ -24,10 +24,13 @@ import {
 import type { UploadProps } from 'antd';
 import { useIntl } from '@umijs/max';
 import { useEffect, useRef, useState } from 'react';
-import { assetApi, systemApi, tokenApi } from '@/services/api';
+import { systemApi } from '@/services/api';
 import { t } from '@/utils/i18n';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
+import ApiKeyField from './ApiKeyField';
+import { usePlaygroundApiKey } from './apiKeyStore';
+import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
 const LS_LAST_TASK = 'playground_3d_last_task_v1';
@@ -133,6 +136,65 @@ function requiresImageInput(model?: string): boolean {
   return m === 'hitem3d-2.0' || m === 'doubao-seed3d-2-0-260328';
 }
 
+// 腾讯混元生 3D 进阶能力(3D→3D / 同步转换)。返回 op 标识,非进阶模型返回 ''。
+function hunyuanAdvOp(model?: string): string {
+  switch ((model || '').toLowerCase()) {
+    case 'hy-3d-profile':
+      return 'profile';
+    case 'hy-3d-texture':
+      return 'texture';
+    case 'hy-3d-reduceface':
+      return 'reduceface';
+    case 'hy-3d-part':
+      return 'part';
+    case 'hy-3d-uv':
+      return 'uv';
+    case 'hy-3d-motion':
+      return 'motion';
+    case 'hy-3d-rigging':
+      return 'rigging';
+    case 'hy-3d-convert':
+      return 'convert';
+    default:
+      return '';
+  }
+}
+
+// 需要「必填」输入 3D 模型文件的 op(motion 的模型是可选重定向,convert 单独处理)。
+const MODEL_FILE_OPS = ['texture', 'reduceface', 'part', 'uv', 'rigging'];
+
+function opAcceptModelExts(op: string): string {
+  switch (op) {
+    case 'part':
+      return '.fbx';
+    case 'reduceface':
+    case 'texture':
+      return '.obj,.glb';
+    case 'rigging':
+      return '.fbx,.glb';
+    default:
+      return '.fbx,.obj,.glb,.gltf,.stl'; // uv / motion retarget / convert
+  }
+}
+
+function inferModelType(name?: string): string {
+  const n = (name || '').toLowerCase().split(/[?#]/)[0];
+  for (const e of ['fbx', 'obj', 'glb', 'gltf', 'stl']) {
+    if (n.endsWith('.' + e)) return e.toUpperCase();
+  }
+  return '';
+}
+
+const PROFILE_TEMPLATES = [
+  'basketball', 'badminton', 'pingpong', 'gymnastics', 'pilidance', 'tennis',
+  'athletics', 'footballboykicking1', 'footballboykicking2', 'guitar',
+  'footballboy', 'skateboard', 'futuresoilder', 'explorer', 'beardollgirl',
+  'bibpantsboy', 'womansitpose', 'womanstandpose2', 'mysteriousprincess',
+  'manstandpose2',
+];
+
+const CONVERT_FORMATS = ['STL', 'USDZ', 'FBX', 'MP4', 'GIF'];
+
 function fixedProVersion(model?: string): string | undefined {
   const m = (model || '').toLowerCase();
   if (m === 'hy-3d-3.0') return '3.0';
@@ -229,9 +291,8 @@ function displayFileName(file: ThreeDFile, url: string, fallback: string): strin
 export default function ThreeDPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
-  const [tokens, setTokens] = useState<API.Token[]>([]);
+  const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
-  const [tokenId, setTokenId] = useState<number>();
 
   const [prompt, setPrompt] = useState('');
   const [imageURL, setImageURL] = useState('');
@@ -244,6 +305,22 @@ export default function ThreeDPanel() {
   const [generateType, setGenerateType] = useState<string | undefined>('Normal');
   const [polygonType, setPolygonType] = useState<string | undefined>();
   const [enableGeometry, setEnableGeometry] = useState(false);
+
+  // 进阶能力(3D→3D / 同步转换)相关入参
+  const [inputModelURL, setInputModelURL] = useState('');
+  const [inputModelType, setInputModelType] = useState<string>('');
+  const [inputModelAssetID, setInputModelAssetID] = useState<number>();
+  const [inputModelName, setInputModelName] = useState('');
+  const [template, setTemplate] = useState<string>();
+  const [faceLevel, setFaceLevel] = useState<string>();
+  const [reducePolygonType, setReducePolygonType] = useState<string>();
+  const [motionType, setMotionType] = useState<number | undefined>();
+  const [duration, setDuration] = useState<number | undefined>(5);
+  const [enableMesh, setEnableMesh] = useState(true);
+  const [enableRewrite, setEnableRewrite] = useState(false);
+  const [enableDurationEst, setEnableDurationEst] = useState(false);
+  const [convertFormat, setConvertFormat] = useState<string>('STL');
+  const [uploadingModel, setUploadingModel] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -267,11 +344,6 @@ export default function ThreeDPanel() {
       if (list.length > 0) {
         setModelName((prev) => prev ?? list[0].value);
       }
-    });
-    tokenApi.list().then((res) => {
-      const list = ((res.data as API.Token[]) || []).filter((t) => t.status === 1);
-      setTokens(list);
-      if (list.length > 0) setTokenId((prev) => prev ?? list[0].id);
     });
     const saved = localStorage.getItem(LS_LAST_TASK);
     if (saved) {
@@ -300,16 +372,58 @@ export default function ThreeDPanel() {
     setResultFormat((prev) => (prev && opts.some((x) => x.value === prev) ? prev : opts[0]?.value));
   }, [modelName]);
 
-  const selectedToken = tokens.find((t) => t.id === tokenId);
-  const tokenAllowsModel =
-    !selectedToken?.allowed_models?.length ||
-    selectedToken.allowed_models.includes(modelName || '');
   const pro = isProModel(modelName);
   const tripo = isTripoModel(modelName);
   const volc3d = isVolcArk3DModel(modelName);
   const imageRequired = requiresImageInput(modelName);
   const proVersion = fixedProVersion(modelName) || modelVersion;
   const hasImageInput = !!imageURL.trim() || !!imageAssetID;
+
+  // 进阶能力派生标记
+  const advOp = hunyuanAdvOp(modelName);
+  const isAdv = advOp !== '';
+  const isConvert = advOp === 'convert';
+  const isProfile = advOp === 'profile';
+  const isMotion = advOp === 'motion';
+  const isTexture = advOp === 'texture';
+  const needModelFile = MODEL_FILE_OPS.includes(advOp) || isConvert; // 必填模型文件
+  const acceptModelFile = needModelFile || isMotion; // motion 模型可选
+  const showImageInput = !isAdv || isProfile || isTexture;
+  const showPrompt = !isAdv || isTexture || isMotion;
+  const hasModelFileInput = !!inputModelURL.trim() || !!inputModelAssetID;
+
+  const modelUploadProps: UploadProps = {
+    accept: opAcceptModelExts(advOp),
+    showUploadList: false,
+    customRequest: async ({ file, onSuccess, onError }) => {
+      setUploadingModel(true);
+      try {
+        const f = file as File;
+        const { id } = await playgroundUpload(f, apiKey, {
+          module: 'model3d',
+          purpose: '3d_input',
+        });
+        setInputModelAssetID(id);
+        setInputModelURL('');
+        setInputModelName(f.name);
+        setInputModelType(inferModelType(f.name));
+        message.success(intl.formatMessage({ id: 'playground.threeD.inputModelUploaded' }));
+        onSuccess?.({} as any);
+      } catch (e: any) {
+        message.error(e?.message || intl.formatMessage({ id: 'playground.threeD.uploadFailed' }));
+        onError?.(e);
+      } finally {
+        setUploadingModel(false);
+      }
+    },
+  };
+
+  const clearInputModel = () => {
+    setInputModelURL('');
+    setInputModelAssetID(undefined);
+    setInputModelName('');
+    setInputModelType('');
+  };
 
   const uploadProps: UploadProps = {
     accept: 'image/*',
@@ -325,27 +439,16 @@ export default function ThreeDPanel() {
       setUploading(true);
       try {
         const f = file as File;
-        const uploaded = await assetApi.upload(f, {
+        const { url, id } = await playgroundUpload(f, apiKey, {
           module: 'model3d',
           purpose: '3d_input',
         });
-        if (uploaded.code !== 0 || !uploaded.data) {
-          throw new Error(uploaded.message || intl.formatMessage({ id: 'playground.threeD.uploadFailed' }));
-        }
-        let url = uploaded.data.public_url;
-        if (!url) {
-          const detail = await assetApi.detail(uploaded.data.id);
-          if (detail.code !== 0 || !detail.data?.url) {
-            throw new Error(detail.message || intl.formatMessage({ id: 'playground.threeD.getAssetUrlFailed' }));
-          }
-          url = detail.data.url;
-        }
-        setImageAssetID(uploaded.data.id);
+        setImageAssetID(id);
         setImageURL('');
         if (!isVolcArk3DModel(modelName)) setPrompt('');
         setPreviewURL(url);
         message.success(intl.formatMessage({ id: 'playground.threeD.inputImageUploaded' }));
-        onSuccess?.(uploaded as any);
+        onSuccess?.({} as any);
       } catch (e: any) {
         message.error(e?.message || intl.formatMessage({ id: 'playground.threeD.uploadFailed' }));
         onError?.(e);
@@ -377,11 +480,11 @@ export default function ThreeDPanel() {
   };
 
   const fetchOnce = async (id: string, auto = false) => {
-    if (!selectedToken) return;
+    if (!apiKey) return;
     if (!auto) setPolling(true);
     try {
       const res = await fetch(apiURL(`/v1/3d/generations/${id}`), {
-        headers: { Authorization: `Bearer ${selectedToken.key}` },
+        headers: { Authorization: `Bearer ${apiKey}` },
       });
       const text = await res.text();
       if (!res.ok) {
@@ -417,15 +520,28 @@ export default function ThreeDPanel() {
 
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.threeD.selectModelWarn' }));
-    if (!selectedToken) return message.warning(intl.formatMessage({ id: 'playground.threeD.createKeyWarn' }));
-    if (!prompt.trim() && !hasImageInput)
-      return message.warning(intl.formatMessage({ id: 'playground.threeD.promptOrImageWarn' }));
-    if (imageRequired && !hasImageInput)
-      return message.warning(intl.formatMessage({ id: 'playground.threeD.modelRequiresImageWarn' }, { model: modelName }));
-    if (prompt.trim() && hasImageInput && !volc3d)
-      return message.warning(intl.formatMessage({ id: 'playground.threeD.promptImageExclusiveWarn' }));
-    if (!tokenAllowsModel)
-      return message.warning(intl.formatMessage({ id: 'playground.threeD.keyModelRestrictedWarn' }, { model: modelName }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+
+    // 按能力做必填校验
+    if (isConvert) {
+      if (!hasModelFileInput) return message.warning(intl.formatMessage({ id: 'playground.threeD.needModelFileWarn' }));
+      if (!convertFormat) return message.warning(intl.formatMessage({ id: 'playground.threeD.needConvertFormatWarn' }));
+    } else if (isProfile) {
+      if (!hasImageInput && !template) return message.warning(intl.formatMessage({ id: 'playground.threeD.profileNeedInputWarn' }));
+    } else if (isMotion) {
+      if (!prompt.trim()) return message.warning(intl.formatMessage({ id: 'playground.threeD.motionNeedPromptWarn' }));
+    } else if (needModelFile) {
+      if (!hasModelFileInput) return message.warning(intl.formatMessage({ id: 'playground.threeD.needModelFileWarn' }));
+      if (isTexture && prompt.trim() && hasImageInput)
+        return message.warning(intl.formatMessage({ id: 'playground.threeD.promptImageExclusiveWarn' }));
+    } else {
+      if (!prompt.trim() && !hasImageInput)
+        return message.warning(intl.formatMessage({ id: 'playground.threeD.promptOrImageWarn' }));
+      if (imageRequired && !hasImageInput)
+        return message.warning(intl.formatMessage({ id: 'playground.threeD.modelRequiresImageWarn' }, { model: modelName }));
+      if (prompt.trim() && hasImageInput && !volc3d)
+        return message.warning(intl.formatMessage({ id: 'playground.threeD.promptImageExclusiveWarn' }));
+    }
 
     setSubmitting(true);
     setErrMsg(null);
@@ -434,33 +550,92 @@ export default function ThreeDPanel() {
     stopTimer();
 
     try {
-      const body: any = {
-        model: modelName,
-        result_format: resultFormat,
-        enable_pbr: enablePBR,
-      };
-      if (!hasImageInput || volc3d) {
-        body.prompt = prompt.trim();
+      // 同步格式转换:单独端点,直接返回结果,不轮询
+      if (isConvert) {
+        const body: any = { model: modelName, format: convertFormat };
+        if (inputModelAssetID) body.file_asset_id = inputModelAssetID;
+        else body.file_url = inputModelURL.trim();
+        const res = await fetch(apiURL('/v1/3d/convert'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          setErrMsg(extractErrMsg(text, res.status));
+          return;
+        }
+        const d = JSON.parse(text) as { result_url?: string; usage?: ThreeDTask['usage'] };
+        const now = Math.floor(Date.now() / 1000);
+        setTask({
+          id: `convert-${now}`,
+          object: '3d.convert',
+          model: modelName,
+          status: 'succeeded',
+          created_at: now,
+          completed_at: now,
+          result_url: d.result_url,
+          usage: d.usage,
+        });
+        return;
       }
-      if (imageAssetID) {
-        body.images = [imageAssetID];
-      } else if (imageURL.trim()) {
-        body.images = [imageURL.trim()];
+
+      const body: any = { model: modelName };
+      // 输入 3D 模型文件(3D→3D 能力 + motion 可选重定向)
+      if (acceptModelFile && hasModelFileInput) {
+        if (inputModelAssetID) {
+          body.input_model_asset_id = inputModelAssetID;
+        } else {
+          body.input_model_url = inputModelURL.trim();
+          if (inputModelType) body.input_model_type = inputModelType;
+        }
       }
-      if (pro) {
-        if (proVersion) body.model_version = proVersion;
-        if (faceCount) body.face_count = faceCount;
-        if (generateType) body.generate_type = generateType;
-        if (polygonType) body.polygon_type = polygonType;
-      } else if (!tripo && enableGeometry) {
-        body.enable_geometry = true;
+      // 输入图(legacy / profile / texture)
+      if (imageAssetID) body.images = [imageAssetID];
+      else if (imageURL.trim()) body.images = [imageURL.trim()];
+      // 提示词
+      const wantPrompt =
+        (!isAdv && (!hasImageInput || volc3d)) || isMotion || (isTexture && !hasImageInput);
+      if (wantPrompt && prompt.trim()) body.prompt = prompt.trim();
+
+      // 能力专属参数
+      const params: any = {};
+      if (!isAdv) {
+        body.result_format = resultFormat;
+        body.enable_pbr = enablePBR;
+        if (pro) {
+          if (proVersion) body.model_version = proVersion;
+          if (faceCount) body.face_count = faceCount;
+          if (generateType) body.generate_type = generateType;
+          if (polygonType) body.polygon_type = polygonType;
+        } else if (!tripo && enableGeometry) {
+          body.enable_geometry = true;
+        }
+      } else if (isProfile) {
+        if (template) params.template = template;
+      } else if (isTexture) {
+        body.enable_pbr = enablePBR;
+        if (modelVersion) params.model_version = modelVersion;
+      } else if (advOp === 'reduceface') {
+        if (reducePolygonType) params.polygon_type = reducePolygonType;
+        if (faceLevel) params.face_level = faceLevel;
+      } else if (advOp === 'part') {
+        params.model_version = '1.5';
+      } else if (isMotion) {
+        if (duration) params.duration = duration;
+        params.enable_mesh = enableMesh;
+        if (enableRewrite) params.enable_rewrite = true;
+        if (enableDurationEst) params.enable_duration_est = true;
+      } else if (advOp === 'rigging') {
+        if (motionType) params.motion_type = motionType;
       }
+      if (Object.keys(params).length) body.parameters = params;
 
       const res = await fetch(apiURL('/v1/3d/generations'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${selectedToken.key}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
       });
@@ -520,7 +695,11 @@ export default function ThreeDPanel() {
         <Card
           style={{ flex: '1 1 440px', minWidth: 360 }}
           title={<span>{intl.formatMessage({ id: 'playground.threeD.title' })}</span>}
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/3d/generations</span>}
+          extra={
+            <span style={{ color: '#888', fontSize: 12 }}>
+              POST {isConvert ? '/v1/3d/convert' : '/v1/3d/generations'}
+            </span>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
@@ -536,25 +715,8 @@ export default function ThreeDPanel() {
                 disabled={!!isInFlight || submitting}
               />
             </div>
-            <div>
-              <div style={labelStyle}>API Key</div>
-              <Select
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({ id: 'playground.threeD.selectKeyPlaceholder' })}
-                options={tokens.map((t) => ({
-                  value: t.id,
-                  label: `${t.name} (${t.key_prefix}***)`,
-                }))}
-                value={tokenId}
-                onChange={setTokenId}
-                disabled={!!isInFlight || submitting}
-              />
-              {selectedToken && !tokenAllowsModel && (
-                <div style={{ color: '#cf1322', fontSize: 12, marginTop: 4 }}>
-                  {intl.formatMessage({ id: 'playground.threeD.keyModelRestrictedWarn' }, { model: modelName })}
-                </div>
-              )}
-            </div>
+            <ApiKeyField />
+            {showImageInput && (
             <div>
               <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.imageLabel' })}</div>
               <Space.Compact style={{ width: '100%' }}>
@@ -597,6 +759,61 @@ export default function ThreeDPanel() {
                 </div>
               )}
             </div>
+            )}
+            {acceptModelFile && (
+            <div>
+              <div style={labelStyle}>
+                {intl.formatMessage({ id: 'playground.threeD.inputModelLabel' })}
+                {isMotion && (
+                  <span style={{ color: '#999', fontWeight: 400 }}>
+                    {' '}
+                    {intl.formatMessage({ id: 'playground.threeD.optionalSuffix' })}
+                  </span>
+                )}
+              </div>
+              <Space.Compact style={{ width: '100%' }}>
+                <Input
+                  placeholder={intl.formatMessage({ id: 'playground.threeD.inputModelUrlPlaceholder' })}
+                  value={inputModelURL}
+                  onChange={(e) => {
+                    setInputModelURL(e.target.value);
+                    setInputModelAssetID(undefined);
+                    setInputModelName('');
+                    setInputModelType(inferModelType(e.target.value));
+                  }}
+                  allowClear
+                  disabled={!!isInFlight || submitting}
+                />
+                <Button onClick={clearInputModel} disabled={!!isInFlight || submitting}>
+                  {intl.formatMessage({ id: 'playground.threeD.clear' })}
+                </Button>
+              </Space.Compact>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Upload {...modelUploadProps} disabled={!!isInFlight || submitting}>
+                  <Button icon={<UploadOutlined />} loading={uploadingModel} disabled={!!isInFlight || submitting}>
+                    {intl.formatMessage({ id: 'playground.threeD.uploadInputModel' })}
+                  </Button>
+                </Upload>
+                {inputModelAssetID && <Tag color="green">asset #{inputModelAssetID}</Tag>}
+                {inputModelName && (
+                  <code style={{ fontSize: 12, color: '#555', wordBreak: 'break-all' }}>{inputModelName}</code>
+                )}
+                <Select
+                  style={{ width: 110 }}
+                  value={inputModelType || undefined}
+                  placeholder={intl.formatMessage({ id: 'playground.threeD.modelTypePlaceholder' })}
+                  onChange={setInputModelType}
+                  options={['FBX', 'OBJ', 'GLB', 'GLTF', 'STL'].map((x) => ({ value: x, label: x }))}
+                  disabled={!!isInFlight || submitting}
+                  allowClear
+                />
+              </div>
+              <div style={{ color: '#888', fontSize: 12, marginTop: 6 }}>
+                {intl.formatMessage({ id: `playground.threeD.modelHint_${advOp}` })}
+              </div>
+            </div>
+            )}
+            {showPrompt && (
             <div>
               <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.promptLabel' })}</div>
               <TextArea
@@ -616,6 +833,8 @@ export default function ThreeDPanel() {
                 </div>
               )}
             </div>
+            )}
+            {!isAdv && (
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.outputFormat' })}</div>
@@ -638,6 +857,31 @@ export default function ThreeDPanel() {
                 </Checkbox>
               </div>
             </div>
+            )}
+            {isConvert && (
+              <div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.convertFormat' })}</div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={convertFormat}
+                  onChange={setConvertFormat}
+                  options={CONVERT_FORMATS.map((x) => ({ value: x, label: x }))}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+            )}
+            {isTexture && (
+              <div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.pbrMaterial' })}</div>
+                <Checkbox
+                  checked={enablePBR}
+                  onChange={(e) => setEnablePBR(e.target.checked)}
+                  disabled={!!isInFlight || submitting}
+                >
+                  {intl.formatMessage({ id: 'playground.threeD.enable' })}
+                </Checkbox>
+              </div>
+            )}
             {pro ? (
               <>
                 <div style={{ display: 'flex', gap: 12 }}>
@@ -701,7 +945,7 @@ export default function ThreeDPanel() {
                   </div>
                 </div>
               </>
-            ) : !tripo ? (
+            ) : (!isAdv && !tripo) ? (
               <Checkbox
                 checked={enableGeometry}
                 onChange={(e) => setEnableGeometry(e.target.checked)}
@@ -710,6 +954,105 @@ export default function ThreeDPanel() {
                 {intl.formatMessage({ id: 'playground.threeD.rapidWhiteModel' })}
               </Checkbox>
             ) : null}
+            {isProfile && (
+              <div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.template' })}</div>
+                <Select
+                  allowClear
+                  showSearch
+                  style={{ width: '100%' }}
+                  value={template}
+                  onChange={setTemplate}
+                  placeholder={intl.formatMessage({ id: 'playground.threeD.templatePlaceholder' })}
+                  options={PROFILE_TEMPLATES.map((x) => ({ value: x, label: x }))}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+            )}
+            {isTexture && (
+              <div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.textureVersion' })}</div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={modelVersion}
+                  onChange={setModelVersion}
+                  options={[
+                    { value: '3.0', label: '3.0' },
+                    { value: '3.1', label: '3.1' },
+                  ]}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+            )}
+            {advOp === 'reduceface' && (
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.polygonType' })}</div>
+                  <Select
+                    allowClear
+                    style={{ width: '100%' }}
+                    value={reducePolygonType}
+                    onChange={setReducePolygonType}
+                    options={[
+                      { value: 'triangle', label: 'triangle' },
+                      { value: 'quadrilateral', label: 'quadrilateral' },
+                    ]}
+                    disabled={!!isInFlight || submitting}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.faceLevel' })}</div>
+                  <Select
+                    allowClear
+                    style={{ width: '100%' }}
+                    value={faceLevel}
+                    onChange={setFaceLevel}
+                    options={['high', 'medium', 'low'].map((x) => ({ value: x, label: x }))}
+                    disabled={!!isInFlight || submitting}
+                  />
+                </div>
+              </div>
+            )}
+            {isMotion && (
+              <>
+                <div>
+                  <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.duration' })}</div>
+                  <InputNumber
+                    min={1}
+                    max={12}
+                    value={duration}
+                    onChange={(v) => setDuration(v ?? undefined)}
+                    style={{ width: '100%' }}
+                    disabled={!!isInFlight || submitting}
+                  />
+                </div>
+                <Space size="large" wrap>
+                  <Checkbox checked={enableMesh} onChange={(e) => setEnableMesh(e.target.checked)} disabled={!!isInFlight || submitting}>
+                    {intl.formatMessage({ id: 'playground.threeD.enableMesh' })}
+                  </Checkbox>
+                  <Checkbox checked={enableRewrite} onChange={(e) => setEnableRewrite(e.target.checked)} disabled={!!isInFlight || submitting}>
+                    {intl.formatMessage({ id: 'playground.threeD.enableRewrite' })}
+                  </Checkbox>
+                  <Checkbox checked={enableDurationEst} onChange={(e) => setEnableDurationEst(e.target.checked)} disabled={!!isInFlight || submitting}>
+                    {intl.formatMessage({ id: 'playground.threeD.enableDurationEst' })}
+                  </Checkbox>
+                </Space>
+              </>
+            )}
+            {advOp === 'rigging' && (
+              <div>
+                <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.motionType' })}</div>
+                <InputNumber
+                  min={1}
+                  max={48}
+                  value={motionType}
+                  onChange={(v) => setMotionType(v ?? undefined)}
+                  style={{ width: '100%' }}
+                  placeholder={intl.formatMessage({ id: 'playground.threeD.motionTypePlaceholder' })}
+                  disabled={!!isInFlight || submitting}
+                />
+              </div>
+            )}
             <Button
               type="primary"
               size="large"
@@ -717,7 +1060,20 @@ export default function ThreeDPanel() {
               icon={submitting ? <LoadingOutlined /> : <SendOutlined />}
               onClick={submit}
               loading={submitting}
-              disabled={!modelName || !selectedToken || !!isInFlight || (!prompt.trim() && !hasImageInput)}
+              disabled={
+                !modelName ||
+                !apiKey ||
+                !!isInFlight ||
+                (isConvert
+                  ? !(hasModelFileInput && !!convertFormat)
+                  : isProfile
+                    ? !(hasImageInput || !!template)
+                    : isMotion
+                      ? !prompt.trim()
+                      : needModelFile
+                        ? !hasModelFileInput
+                        : !prompt.trim() && !hasImageInput)
+              }
             >
               {submitting
                 ? intl.formatMessage({ id: 'playground.threeD.submitting' })
