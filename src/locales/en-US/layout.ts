@@ -34,6 +34,7 @@ export default {
   'layout.docs.link.templates': 'Scene Effects',
   'layout.docs.link.3d': '3D Generation',
   'layout.docs.link.digitalHuman': 'Digital Human',
+  'layout.docs.link.digitalHumanLive': 'Digital Human Live',
   'layout.docs.link.audio': 'Audio',
   'layout.docs.link.embeddings': 'Embeddings',
   'layout.docs.link.vectordb': 'Vector Database',
@@ -48,6 +49,14 @@ export default {
   'layout.docs.sub.multiframe': 'Smart Multi-frame',
   'layout.docs.sub.virtualTryon': 'Virtual Try-on',
   'layout.docs.sub.models': 'Model Cheatsheet',
+  // digital human live section anchors
+  'layout.docs.sub.dhFlow': 'Flow',
+  'layout.docs.sub.dhCreate': 'Create Session',
+  'layout.docs.sub.dhWs': 'Control Channel',
+  'layout.docs.sub.dhRtc': 'RTC',
+  'layout.docs.sub.dhVoices': 'Voices',
+  'layout.docs.sub.dhBilling': 'Billing',
+  'layout.docs.sub.dhPersona': 'Persona',
   // docs misc
   'layout.docs.toc': 'Contents',
   'layout.docs.breadcrumbRoot': 'Docs',

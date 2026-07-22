@@ -31,6 +31,7 @@
 import {
   AudioOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   PictureOutlined,
   SendOutlined,
@@ -64,6 +65,7 @@ import { t } from '@/utils/i18n';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
@@ -287,6 +289,7 @@ type VideoTask = {
 export default function VirtualmanPanel() {
   const intl = useIntl();
   const { apiKey } = usePlaygroundApiKey();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [enabledModels, setEnabledModels] = useState<Set<string>>(new Set());
 
   const [modelName, setModelName] = useState<string>('wan2.2-s2v');
@@ -597,7 +600,7 @@ export default function VirtualmanPanel() {
     stopTimer();
 
     try {
-      const body: any = { model: modelName };
+      const body: any = { model: modelName, task_type: 'virtualman' };
 
       if (isWan) {
         if (wanCap.needImage) body.first_frame_image = firstFrameImage.trim();
@@ -1288,7 +1291,20 @@ export default function VirtualmanPanel() {
         />
       )}
 
-      <Card size="small" className="pg-section">
+      <Card
+        size="small"
+        className="pg-section"
+        extra={
+          <Button
+            size="small"
+            type="text"
+            icon={<HistoryOutlined />}
+            onClick={() => setHistoryOpen(true)}
+          >
+            {intl.formatMessage({ id: 'playground.video.history' })}
+          </Button>
+        }
+      >
         <Space>
           <Button type="primary" icon={<SendOutlined />} loading={submitting} disabled={!apiKey} onClick={onSubmit}>
             {intl.formatMessage({ id: 'playground.virtualman.submitTask' })}
@@ -1358,6 +1374,14 @@ export default function VirtualmanPanel() {
           </div>
         )}
       </Card>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="virtualman"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

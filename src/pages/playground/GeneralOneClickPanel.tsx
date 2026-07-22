@@ -2,6 +2,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -34,6 +35,7 @@ import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_general_one_click_last_task_v1';
@@ -167,6 +169,8 @@ export default function GeneralOneClickPanel() {
   const [composeIds, setComposeIds] = useState<string[]>([]);
   const [child, setChild] = useState<VideoTask | null>(null);
   const [posting, setPosting] = useState(false);
+
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [elapsedMs, setElapsedMs] = useState(0);
   const elapsedTimerRef = useRef<number | null>(null);
@@ -350,6 +354,7 @@ export default function GeneralOneClickPanel() {
     try {
       const body: any = {
         model: GENERAL_MODEL,
+        task_type: 'general_one_click',
         images: images.map((x) => x.url),
         duration,
         aspect_ratio: aspectRatio,
@@ -519,7 +524,19 @@ export default function GeneralOneClickPanel() {
               <VideoCameraOutlined /> {intl.formatMessage({ id: 'playground.generalOneClick.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             {!hasModel && (
@@ -870,6 +887,14 @@ export default function GeneralOneClickPanel() {
       <div style={tipBoxStyle}>
         {intl.formatMessage({ id: 'playground.generalOneClick.tipBox' }, { min: MIN_DURATION, max: MAX_DURATION })}
       </div>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="general_one_click"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

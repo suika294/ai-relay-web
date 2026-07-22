@@ -141,6 +141,27 @@ export default function DocThreeD() {
                 <code>USDZ</code>。
               </td>
             </tr>
+            <tr>
+              <td>
+                <code>Hunyuan/3d_2.0</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.capWorld' })}</td>
+              <td>
+                {intl.formatMessage({ id: 'docs.threeD.modelWorldDesc' })}{' '}
+                <code>SPZ</code>、<code>GLB</code>、<code>PLY</code>。
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>Hunyuan/3d_panorama</code>
+              </td>
+              <td>{intl.formatMessage({ id: 'docs.threeD.capPanorama' })}</td>
+              <td>
+                {intl.formatMessage({ id: 'docs.threeD.modelPanoramaDesc' })}
+                <code>POST {API_BASE}/images/generations</code>
+                {intl.formatMessage({ id: 'docs.threeD.panoramaEndpointSuffix' })}
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -250,6 +271,35 @@ export default function DocThreeD() {
   }'`}
       />
 
+      <h3>{intl.formatMessage({ id: 'docs.threeD.hunyuanWorldHeading' })}</h3>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "Hunyuan/3d_2.0",
+    "prompt": "${intl.formatMessage({ id: 'docs.threeD.examplePromptWorld' })}"
+  }'`}
+      />
+
+      <p>{intl.formatMessage({ id: 'docs.threeD.worldReconNote' })}</p>
+      <CodeBlock
+        lang="bash"
+        code={`curl ${API_BASE}/3d/generations \\
+  -H "Authorization: Bearer sk-your-key" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "Hunyuan/3d_2.0",
+    "images": [
+      "https://example.com/orbit-01.jpg",
+      "https://example.com/orbit-02.jpg",
+      "https://example.com/orbit-03.jpg"
+    ]
+  }'
+# 或短视频:  "images": ["https://example.com/orbit.mp4"]`}
+      />
+
       <p>
         {intl.formatMessage({ id: 'docs.threeD.localUploadTip1' })}{' '}
         <code>{'images: [123]'}</code>
@@ -284,7 +334,8 @@ export default function DocThreeD() {
                 <code>hy-3d-3.0</code>、<code>hy-3d-3.1</code>、
                 <code>hy-3d-express</code>、<code>Tripo/Tripo-H3.1</code>、
                 <code>Tripo/Tripo-P1.0</code>、<code>hyper3d-gen2</code>、
-                <code>hitem3d-2.0</code>、<code>doubao-seed3d-2-0-260328</code>。
+                <code>hitem3d-2.0</code>、<code>doubao-seed3d-2-0-260328</code>、
+                <code>Hunyuan/3d_2.0</code>。
                 {intl.formatMessage({ id: 'docs.threeD.fieldModelDescAdv' })}{' '}
                 <code>hy-3d-profile</code>、<code>hy-3d-texture</code>、
                 <code>hy-3d-reduceface</code>、<code>hy-3d-part</code>、
@@ -631,6 +682,31 @@ export default function DocThreeD() {
 }`}
       />
 
+      <h3>{intl.formatMessage({ id: 'docs.threeD.worldResponseHeading' })}</h3>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "id": "3d-9b2e1a7c...",
+  "object": "3d.generation",
+  "status": "succeeded",
+  "model": "Hunyuan/3d_2.0",
+  "created_at": 1760000000,
+  "completed_at": 1760000320,
+  "preview_url": "https://cdn.example.com/model3d/scene-preview.png",
+  "files": [
+    {
+      "type": "SPZ",
+      "url": "https://cdn.example.com/model3d/scene.spz",
+      "preview_image_url": "https://cdn.example.com/model3d/scene-preview.png"
+    }
+  ],
+  "usage": {
+    "quota_cost": 5000,
+    "usd_cost": "0.500000"
+  }
+}`}
+      />
+
       <h3>{intl.formatMessage({ id: 'docs.threeD.failedResponseHeading' })}</h3>
       <CodeBlock
         lang="json"
@@ -642,6 +718,22 @@ export default function DocThreeD() {
   "error": {
     "code": "InvalidParameter.InvalidParameter",
     "message": "prompt and image input cannot be used together"
+  }
+}`}
+      />
+
+      <h3>{intl.formatMessage({ id: 'docs.threeD.worldFailedHeading' })}</h3>
+      <p>{intl.formatMessage({ id: 'docs.threeD.worldFailedNote' })}</p>
+      <CodeBlock
+        lang="json"
+        code={`{
+  "id": "3d-9b2e1a7c...",
+  "object": "3d.generation",
+  "status": "failed",
+  "model": "Hunyuan/3d_2.0",
+  "error": {
+    "code": "InvalidParameterValue",
+    "message": "StorageMode Permanent is not supported for model Hunyuan 3d_2.0"
   }
 }`}
       />

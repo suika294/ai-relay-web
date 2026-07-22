@@ -1,5 +1,6 @@
 import {
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -30,6 +31,8 @@ import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import ThreeDHistoryDrawer from './ThreeDHistoryDrawer';
+import SceneViewer, { classifyThreeDFile, type SceneKind } from './SceneViewer';
 import { playgroundUpload } from './upload';
 
 const { TextArea } = Input;
@@ -134,6 +137,17 @@ function isVolcArk3DModel(model?: string): boolean {
 function requiresImageInput(model?: string): boolean {
   const m = (model || '').toLowerCase();
   return m === 'hitem3d-2.0' || m === 'doubao-seed3d-2-0-260328';
+}
+
+// 混元 3D 世界模型:支持文生/图生场景 + 世界重建(多视角图片组或短视频)。
+function isHunyuanWorldModel(model?: string): boolean {
+  return (model || '').toLowerCase() === 'hunyuan/3d_2.0';
+}
+
+// 世界模型输入文件是否为视频(短视频实景复刻)。
+function isVideoFileName(name?: string): boolean {
+  const n = (name || '').toLowerCase().split(/[?#]/)[0];
+  return /\.(mp4|mov|m4v|webm|avi|mkv)$/.test(n);
 }
 
 // 腾讯混元生 3D 进阶能力(3D→3D / 同步转换)。返回 op 标识,非进阶模型返回 ''。
@@ -292,12 +306,20 @@ export default function ThreeDPanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
   const { apiKey } = usePlaygroundApiKey();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [modelName, setModelName] = useState<string>();
+  // 交互式查看器加载失败时记录该 URL,回退到「预览图 + 下载」兜底。
+  const [viewerFailedURL, setViewerFailedURL] = useState<string>();
 
   const [prompt, setPrompt] = useState('');
   const [imageURL, setImageURL] = useState('');
   const [imageAssetID, setImageAssetID] = useState<number>();
   const [previewURL, setPreviewURL] = useState('');
+  // 世界重建(实景复刻)多文件:图片组 / 短视频。ref 用 asset id(优先)或 url。
+  const [worldFiles, setWorldFiles] = useState<
+    Array<{ id?: number; url?: string; name: string; video: boolean }>
+  >([]);
+  const [worldUploading, setWorldUploading] = useState(false);
   const [resultFormat, setResultFormat] = useState<string>();
   const [enablePBR, setEnablePBR] = useState(true);
   const [modelVersion, setModelVersion] = useState<string>('3.0');
@@ -370,11 +392,14 @@ export default function ThreeDPanel() {
   useEffect(() => {
     const opts = formatOptions(modelName);
     setResultFormat((prev) => (prev && opts.some((x) => x.value === prev) ? prev : opts[0]?.value));
+    setWorldFiles([]); // 切换模型清空世界重建文件列表
   }, [modelName]);
 
   const pro = isProModel(modelName);
   const tripo = isTripoModel(modelName);
   const volc3d = isVolcArk3DModel(modelName);
+  const worldModel = isHunyuanWorldModel(modelName);
+  const worldHasFiles = worldModel && worldFiles.length > 0;
   const imageRequired = requiresImageInput(modelName);
   const proVersion = fixedProVersion(modelName) || modelVersion;
   const hasImageInput = !!imageURL.trim() || !!imageAssetID;
@@ -388,7 +413,8 @@ export default function ThreeDPanel() {
   const isTexture = advOp === 'texture';
   const needModelFile = MODEL_FILE_OPS.includes(advOp) || isConvert; // 必填模型文件
   const acceptModelFile = needModelFile || isMotion; // motion 模型可选
-  const showImageInput = !isAdv || isProfile || isTexture;
+  // 世界模型用多文件上传器(见下)替代单图输入,故这里排除。
+  const showImageInput = (!isAdv || isProfile || isTexture) && !worldModel;
   const showPrompt = !isAdv || isTexture || isMotion;
   const hasModelFileInput = !!inputModelURL.trim() || !!inputModelAssetID;
 
@@ -454,6 +480,40 @@ export default function ThreeDPanel() {
         onError?.(e);
       } finally {
         setUploading(false);
+      }
+    },
+  };
+
+  // 世界重建多文件上传:接受图片 + 短视频,多选,逐个转存后追加到 worldFiles。
+  const worldUploadProps: UploadProps = {
+    accept: 'image/*,video/*',
+    multiple: true,
+    showUploadList: false,
+    beforeUpload: (file) => {
+      const ok = (file.type || '').startsWith('image/') || (file.type || '').startsWith('video/');
+      if (!ok) {
+        message.warning(intl.formatMessage({ id: 'playground.threeD.uploadImageOnly' }));
+        return Upload.LIST_IGNORE;
+      }
+      return true;
+    },
+    customRequest: async ({ file, onSuccess, onError }) => {
+      setWorldUploading(true);
+      try {
+        const f = file as File;
+        const video = (f.type || '').startsWith('video/') || isVideoFileName(f.name);
+        const { url, id } = await playgroundUpload(f, apiKey, {
+          module: 'model3d',
+          purpose: '3d_input',
+        });
+        setWorldFiles((prev) => [...prev, { id, url, name: f.name, video }]);
+        // 世界模型允许 prompt + 文件并存(实景复刻可带文字引导),不清空 prompt。
+        onSuccess?.({} as any);
+      } catch (e: any) {
+        message.error(e?.message || intl.formatMessage({ id: 'playground.threeD.uploadFailed' }));
+        onError?.(e);
+      } finally {
+        setWorldUploading(false);
       }
     },
   };
@@ -535,7 +595,8 @@ export default function ThreeDPanel() {
       if (isTexture && prompt.trim() && hasImageInput)
         return message.warning(intl.formatMessage({ id: 'playground.threeD.promptImageExclusiveWarn' }));
     } else {
-      if (!prompt.trim() && !hasImageInput)
+      // 世界模型:prompt(文生)、单/多图或短视频(图生/实景复刻)任一即可,且允许 prompt+文件并存。
+      if (!prompt.trim() && !hasImageInput && !worldHasFiles)
         return message.warning(intl.formatMessage({ id: 'playground.threeD.promptOrImageWarn' }));
       if (imageRequired && !hasImageInput)
         return message.warning(intl.formatMessage({ id: 'playground.threeD.modelRequiresImageWarn' }, { model: modelName }));
@@ -590,8 +651,12 @@ export default function ThreeDPanel() {
           if (inputModelType) body.input_model_type = inputModelType;
         }
       }
+      // 世界重建(实景复刻):多文件(图片组 / 短视频)全部进 images
+      if (worldModel && worldFiles.length) {
+        body.images = worldFiles.map((f) => f.id ?? f.url).filter(Boolean);
+      }
       // 输入图(legacy / profile / texture)
-      if (imageAssetID) body.images = [imageAssetID];
+      else if (imageAssetID) body.images = [imageAssetID];
       else if (imageURL.trim()) body.images = [imageURL.trim()];
       // 提示词
       const wantPrompt =
@@ -600,7 +665,9 @@ export default function ThreeDPanel() {
 
       // 能力专属参数
       const params: any = {};
-      if (!isAdv) {
+      if (worldModel) {
+        // 世界模型:输出格式由 SceneType 决定,不下发 result_format/enable_pbr 等。
+      } else if (!isAdv) {
         body.result_format = resultFormat;
         body.enable_pbr = enablePBR;
         if (pro) {
@@ -688,6 +755,16 @@ export default function ThreeDPanel() {
     },
     [],
   );
+  // 挑一个可交互内嵌渲染的产物:高斯泼溅 > mesh > 全景视频。
+  const sceneItem: { url: string; kind: SceneKind } | null = (() => {
+    const priority: SceneKind[] = ['splat', 'mesh', 'panorama-video'];
+    for (const want of priority) {
+      for (const { file, url } of files) {
+        if (classifyThreeDFile(file.type, url) === want) return { url, kind: want };
+      }
+    }
+    return null;
+  })();
 
   return (
     <div style={{ padding: '8px 8px 32px', maxWidth: 1120, margin: '0 auto' }}>
@@ -696,9 +773,19 @@ export default function ThreeDPanel() {
           style={{ flex: '1 1 440px', minWidth: 360 }}
           title={<span>{intl.formatMessage({ id: 'playground.threeD.title' })}</span>}
           extra={
-            <span style={{ color: '#888', fontSize: 12 }}>
-              POST {isConvert ? '/v1/3d/convert' : '/v1/3d/generations'}
-            </span>
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>
+                POST {isConvert ? '/v1/3d/convert' : '/v1/3d/generations'}
+              </span>
+            </Space>
           }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
@@ -756,6 +843,77 @@ export default function ThreeDPanel() {
                     height={120}
                     style={{ objectFit: 'cover', borderRadius: 8 }}
                   />
+                </div>
+              )}
+            </div>
+            )}
+            {worldModel && (
+            <div>
+              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.worldFilesLabel' })}</div>
+              <div style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>
+                {intl.formatMessage({ id: 'playground.threeD.worldFilesHint' })}
+              </div>
+              <Upload {...worldUploadProps} disabled={!!isInFlight || submitting}>
+                <Button icon={<UploadOutlined />} loading={worldUploading} disabled={!!isInFlight || submitting}>
+                  {intl.formatMessage({ id: 'playground.threeD.uploadWorldFiles' })}
+                </Button>
+              </Upload>
+              {worldFiles.length > 0 && (
+                <div style={{ marginTop: 10, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {worldFiles.map((f, i) => (
+                    <div key={`${f.id ?? f.url}-${i}`} style={{ width: 96 }}>
+                      <div style={{ position: 'relative' }}>
+                        {f.video ? (
+                          <div
+                            style={{
+                              width: 96,
+                              height: 96,
+                              borderRadius: 8,
+                              background: '#f0f0f0',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Tag color="purple" style={{ margin: 0 }}>
+                              {intl.formatMessage({ id: 'playground.threeD.videoTag' })}
+                            </Tag>
+                          </div>
+                        ) : (
+                          <Image
+                            src={f.url}
+                            width={96}
+                            height={96}
+                            style={{ objectFit: 'cover', borderRadius: 8 }}
+                          />
+                        )}
+                        <Button
+                          size="small"
+                          type="text"
+                          danger
+                          disabled={!!isInFlight || submitting}
+                          onClick={() => setWorldFiles((prev) => prev.filter((_, j) => j !== i))}
+                          style={{ position: 'absolute', top: 2, right: 2, background: 'rgba(255,255,255,0.85)' }}
+                        >
+                          ×
+                        </Button>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: '#999',
+                          marginTop: 2,
+                          maxWidth: 96,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={f.name}
+                      >
+                        {f.name}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -834,7 +992,7 @@ export default function ThreeDPanel() {
               )}
             </div>
             )}
-            {!isAdv && (
+            {!isAdv && !worldModel && (
             <div style={{ display: 'flex', gap: 12 }}>
               <div style={{ flex: 1 }}>
                 <div style={labelStyle}>{intl.formatMessage({ id: 'playground.threeD.outputFormat' })}</div>
@@ -1159,12 +1317,22 @@ export default function ThreeDPanel() {
                       : ''}
                     {task.usage?.usd_cost ? ` · $${task.usage.usd_cost}` : ''}
                   </div>
-                  {taskPreviewURL && (
-                    <Image
-                      src={taskPreviewURL}
-                      width="100%"
-                      style={{ maxHeight: 320, objectFit: 'contain', borderRadius: 10, background: '#fafafa' }}
+                  {sceneItem && viewerFailedURL !== sceneItem.url ? (
+                    <SceneViewer
+                      key={sceneItem.url}
+                      url={sceneItem.url}
+                      kind={sceneItem.kind}
+                      loadingText={intl.formatMessage({ id: 'playground.threeD.sceneLoading' })}
+                      onError={() => setViewerFailedURL(sceneItem.url)}
                     />
+                  ) : (
+                    taskPreviewURL && (
+                      <Image
+                        src={taskPreviewURL}
+                        width="100%"
+                        style={{ maxHeight: 320, objectFit: 'contain', borderRadius: 10, background: '#fafafa' }}
+                      />
+                    )
                   )}
                   {files.length > 0 ? (
                     <Space direction="vertical" style={{ width: '100%', marginTop: 12 }}>
@@ -1240,6 +1408,12 @@ export default function ThreeDPanel() {
       <div style={hintStyle}>
         {intl.formatMessage({ id: 'playground.threeD.footerHint' })}
       </div>
+
+      <ThreeDHistoryDrawer
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

@@ -34,6 +34,7 @@ export default {
   'layout.docs.link.templates': '场景特效',
   'layout.docs.link.3d': '3D 生成',
   'layout.docs.link.digitalHuman': '数智人',
+  'layout.docs.link.digitalHumanLive': '数字人互动',
   'layout.docs.link.audio': '语音 Audio',
   'layout.docs.link.embeddings': '向量 Embeddings',
   'layout.docs.link.vectordb': '向量数据库',
@@ -48,6 +49,14 @@ export default {
   'layout.docs.sub.multiframe': '智能多帧',
   'layout.docs.sub.virtualTryon': '虚拟试穿',
   'layout.docs.sub.models': '模型速查',
+  // 数字人互动章节锚点
+  'layout.docs.sub.dhFlow': '接入流程',
+  'layout.docs.sub.dhCreate': '创建会话',
+  'layout.docs.sub.dhWs': '控制通道',
+  'layout.docs.sub.dhRtc': 'RTC 接入',
+  'layout.docs.sub.dhVoices': '音色',
+  'layout.docs.sub.dhBilling': '计费',
+  'layout.docs.sub.dhPersona': '人设模板',
   // 文档其它
   'layout.docs.toc': '目录',
   'layout.docs.breadcrumbRoot': '文档',

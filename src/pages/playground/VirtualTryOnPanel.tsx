@@ -2,6 +2,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -29,6 +30,7 @@ import { systemApi } from '@/services/api';
 import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { usePlaygroundApiKey } from './apiKeyStore';
 import { playgroundUpload } from './upload';
 
@@ -133,6 +135,7 @@ export default function VirtualTryOnPanel() {
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const elapsedTimerRef = useRef<number | null>(null);
   const pollRef = useRef<number | null>(null);
 
@@ -415,7 +418,19 @@ export default function VirtualTryOnPanel() {
               <SkinOutlined /> {intl.formatMessage({ id: 'playground.virtualTryOn.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/images/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.image.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/images/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
@@ -628,6 +643,13 @@ export default function VirtualTryOnPanel() {
       >
         💡 {intl.formatMessage({ id: 'playground.virtualTryOn.bottomTip' })}
       </div>
+
+      <MediaHistoryDrawer
+        kind="image"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

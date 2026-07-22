@@ -15,15 +15,20 @@
     "@ant-design/icons": "^5.3.0",
     "@ant-design/pro-components": "^2.6.0",
     "@lobehub/icons": "^5.5.4",
+    "@sparkjsdev/spark": "^0.1.8",
     "@umijs/max": "^4.1.0",
+    "aliyun-rtc-sdk": "7.3.3",
     "antd": "^5.13.0",
     "dayjs": "^1.11.10",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "reactflow": "^11.11.4",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/three": "^0.169.0",
     "typescript": "^5.3.0"
   }
 }

@@ -33,6 +33,7 @@ import { browserDownloadName } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import MediaHistoryDrawer from './MediaHistoryDrawer';
 import ApiKeyField from './ApiKeyField';
+import SceneViewer from './SceneViewer';
 import { usePlaygroundApiKey } from './apiKeyStore';
 import { playgroundUpload } from './upload';
 
@@ -436,6 +437,8 @@ function statusText(s: string): string {
 export default function ImagePanel() {
   const intl = useIntl();
   const [models, setModels] = useState<{ value: string; label: string }[]>([]);
+  // 360 全景查看器加载失败时记录该 URL,回退到扁平 <Image>。
+  const [panoViewerFailedURL, setPanoViewerFailedURL] = useState<string>();
   const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
   const [prompt, setPrompt] = useState('');
@@ -760,6 +763,8 @@ export default function ImagePanel() {
       ? `${task.completed_at - task.created_at}s`
       : undefined;
   const items = task?.status === 'succeeded' ? task.data || [] : [];
+  // 混元 360 全景图(Hunyuan/3d_panorama):结果是等距柱状全景,用 SceneViewer 的球体模式看。
+  const isPanorama = /3d_panorama|panorama|全景/i.test(modelName || '');
 
   return (
     <div style={{ padding: '8px 8px 32px', maxWidth: 1120, margin: '0 auto' }}>
@@ -1121,10 +1126,11 @@ export default function ImagePanel() {
                       : ''}{' '}
                     {intl.formatMessage({ id: 'playground.image.doneCount' }, { n: items.length })}
                   </div>
-                  <Space wrap size="middle">
+                  <Space wrap size="middle" style={isPanorama ? { width: '100%' } : undefined}>
                     {items.map((it, i) => {
                       const src = it.url || '';
                       if (!src) return null;
+                      const showPano = isPanorama && panoViewerFailedURL !== src;
                       return (
                         <div
                           key={i}
@@ -1133,17 +1139,28 @@ export default function ImagePanel() {
                             borderRadius: 10,
                             overflow: 'hidden',
                             background: '#fafafa',
+                            width: showPano ? '100%' : undefined,
                           }}
                         >
-                          <Image
-                            src={src}
-                            alt={`generated-${i}`}
-                            style={{
-                              maxWidth: 320,
-                              maxHeight: 320,
-                              display: 'block',
-                            }}
-                          />
+                          {showPano ? (
+                            <SceneViewer
+                              key={src}
+                              url={src}
+                              kind="panorama-image"
+                              loadingText={intl.formatMessage({ id: 'playground.threeD.sceneLoading' })}
+                              onError={() => setPanoViewerFailedURL(src)}
+                            />
+                          ) : (
+                            <Image
+                              src={src}
+                              alt={`generated-${i}`}
+                              style={{
+                                maxWidth: 320,
+                                maxHeight: 320,
+                                display: 'block',
+                              }}
+                            />
+                          )}
                           <div
                             style={{
                               padding: '6px 10px',

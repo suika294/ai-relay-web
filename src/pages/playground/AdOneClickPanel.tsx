@@ -2,6 +2,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -34,6 +35,7 @@ import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_ad_one_click_last_task_v1';
@@ -157,6 +159,8 @@ export default function AdOneClickPanel() {
   const [editPrompt, setEditPrompt] = useState<string>('');
   const [child, setChild] = useState<VideoTask | null>(null);
   const [posting, setPosting] = useState(false);
+
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [elapsedMs, setElapsedMs] = useState(0);
   const elapsedTimerRef = useRef<number | null>(null);
@@ -334,6 +338,7 @@ export default function AdOneClickPanel() {
     try {
       const body: any = {
         model: AD_MODEL,
+        task_type: 'ad_one_click',
         images: images.map((x) => x.url),
         duration,
         aspect_ratio: aspectRatio,
@@ -470,7 +475,19 @@ export default function AdOneClickPanel() {
               <ShoppingOutlined /> {intl.formatMessage({ id: 'playground.adOneClick.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             {!hasModel && (
@@ -843,6 +860,14 @@ export default function AdOneClickPanel() {
       <div style={tipBoxStyle}>
         💡 {intl.formatMessage({ id: 'playground.adOneClick.tipBox' }, { min: MIN_DURATION, max: MAX_DURATION })}
       </div>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="ad_one_click"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

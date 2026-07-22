@@ -2,6 +2,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -30,6 +31,7 @@ import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { playgroundUpload } from './upload';
 
 const LS_LAST_TASK = 'playground_effects_last_task_v1';
@@ -197,6 +199,7 @@ export default function EffectsPanel() {
   const [polling, setPolling] = useState(false);
   const [task, setTask] = useState<VideoTask | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const [elapsedMs, setElapsedMs] = useState(0);
   const elapsedTimerRef = useRef<number | null>(null);
@@ -366,6 +369,7 @@ export default function EffectsPanel() {
 
     try {
       const body: any = {
+        task_type: 'effects',
         model: modelName,
         effect_scene: effectScene,
         images: images.map((x) => x.url),
@@ -446,7 +450,19 @@ export default function EffectsPanel() {
               <ThunderboltOutlined /> {intl.formatMessage({ id: 'playground.effects.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
@@ -770,6 +786,14 @@ export default function EffectsPanel() {
       >
         {intl.formatMessage({ id: 'playground.effects.footer' }, { count: EFFECT_SCENES.length })}
       </div>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="effects"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { AudioOutlined, CloseCircleOutlined, CustomerServiceOutlined, DeleteOutlined, DownloadOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SendOutlined, UploadOutlined } from '@ant-design/icons';
+import { AudioOutlined, CloseCircleOutlined, CustomerServiceOutlined, DeleteOutlined, DownloadOutlined, HistoryOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SendOutlined, ThunderboltOutlined, UploadOutlined } from '@ant-design/icons';
 import { Alert, AutoComplete, Button, Card, Collapse, Empty, Input, message, Segmented, Select, Slider, Space, Spin, Tag, Tooltip, Upload } from 'antd';
 import type { UploadProps } from 'antd';
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +8,7 @@ import { apiURL } from '@/utils/request';
 import { t } from '@/utils/i18n';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
+import SpeechHistoryDrawer from './SpeechHistoryDrawer';
 
 const { TextArea } = Input;
 
@@ -110,6 +111,7 @@ type TTSSyncResult = {
   url: string; // objectURL,记得 revoke
   format: string;
   charCount: number;
+  segments?: number; // 分段情绪:参与拼接的段数(单段合成时不填)
 };
 
 // 把腾讯云数字 ID + OpenAI 风格逻辑名对齐成一份 UI 候选,与后端
@@ -275,6 +277,31 @@ function modelProviderTypeToVoiceProvider(providerType?: string): VoiceProvider 
     case 'tts_tencent':
     default:
       return 'tencent';
+  }
+}
+
+// isStreamingTTSProvider 判断 provider_type 是否支持 WebSocket 流式合成(目前仅腾讯云 MPS 流式)。
+// 「流式 TTS」子面板(TTSStreamMode)只列命中此判定的模型,直连 /v1/audio/speech/ws。
+function isStreamingTTSProvider(providerType?: string): boolean {
+  return (providerType || '').toLowerCase() === 'tts_tencent_stream';
+}
+
+// ttsMimeOf 把容器格式映射到 Blob MIME。WS 下行是裸音频字节(无 Content-Type),拼 Blob 时需手动带上;
+// 对齐后端 handler/relay_audio_speech.go 的 audioMIME。
+function ttsMimeOf(format: string): string {
+  switch ((format || '').toLowerCase()) {
+    case 'wav':
+      return 'audio/wav';
+    case 'opus':
+      return 'audio/ogg';
+    case 'aac':
+      return 'audio/aac';
+    case 'm4a':
+      return 'audio/mp4';
+    case 'pcm':
+      return 'audio/L16';
+    default:
+      return 'audio/mpeg';
   }
 }
 
@@ -555,11 +582,233 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// ---------- 分段情绪(每段指定语气,逐段合成后拼接)----------
+//
+// MiniMax 官网那种「给某段文字标情绪、指定用什么语气读」不是一次 API 能做到的:
+// 上游 emotion 是**请求级**参数(整段一个情绪),分段是产品层「切段 → 逐段合成 → 拼接」堆出来的。
+// 这里前端编排:每段各带自己的 emotion 调一次同步 /v1/audio/speech,用 Web Audio 把返回音频拼成一条。
+// 后端 /v1/audio/speech 单段行为完全不变(纯新增调用,不动原有入口)。
+
+// SEG_GAP_MS 段间静音,让不同情绪的段落衔接自然一点。
+const SEG_GAP_MS = 150;
+
+// 划词标注模型:在一整段文本上,给「选中的字符区间」打情绪标签(参考 MiniMax 官网的交互)。
+// EmotionRange 一段带情绪的字符区间 [start, end)(半开);互不重叠,由 addEmotionRange 维护。
+type EmotionRange = { id: string; start: number; end: number; emotion: string };
+// EmotionChunk 提交/预览用的有序切块:把整段文本按区间切成「带情绪」+「未标注」的连续块。
+type EmotionChunk = { text: string; emotion: string };
+
+// EMOTION_COLOR 情绪 → 展示色(情绪按钮 + 划词高亮共用)。未列出的情绪回退到中性灰。
+const EMOTION_COLOR: Record<string, string> = {
+  neutral: '#8c8c8c',
+  happy: '#faad14',
+  sad: '#597ef7',
+  angry: '#ff4d4f',
+  fearful: '#9254de',
+  fear: '#9254de',
+  disgusted: '#73d13d',
+  surprised: '#f759ab',
+  calm: '#36cfc9',
+  amaze: '#eb2f96',
+  peaceful: '#13c2c2',
+  exciting: '#ff7a45',
+};
+function emotionColor(v: string): string {
+  return EMOTION_COLOR[v] || '#8c8c8c';
+}
+
+// EMOTION_CATALOG 各 voiceProvider 支持的情绪取值。值直接作为 emotion_category 发给后端,语义 per 厂商:
+//   - minimax → voice_setting.emotion(仅 speech-02+ 情感模型生效)
+//   - tencent → EmotionCategory(仅精品/多情感音色生效;火山情感音色也走这条 provider 映射)
+// openai/dashscope/kling 上游无情绪参数 —— 给通用集但会被忽略(UI 有提示),保证「全部厂商」都能操作。
+const EMOTION_CATALOG: Record<VoiceProvider, string[]> = {
+  minimax: ['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm'],
+  tencent: ['neutral', 'happy', 'sad', 'angry', 'fear', 'amaze', 'disgusted', 'peaceful', 'exciting'],
+  openai: ['neutral', 'happy', 'sad', 'angry'],
+  dashscope: ['neutral', 'happy', 'sad', 'angry'],
+  kling: ['neutral', 'happy', 'sad', 'angry'],
+};
+
+// emotionSupported 该厂商上游是否真的吃 emotion 参数(决定是否给「情绪会被忽略」提示)。
+function emotionSupported(vp: VoiceProvider): boolean {
+  return vp === 'minimax' || vp === 'tencent';
+}
+
+// ---------- 中文文本 → 中文音色推荐 ----------
+// 英文/日文音色读中文时发音生硬、情绪基本压平(MiniMax 尤其明显)。文本是中文却选了非中文音色时,
+// 给一条可一键切换的推荐,提升发音质量与情绪表达。纯提示,不改默认。
+
+// isChineseText 文本是否以中文为主(含 ≥2 个汉字即视为中文场景)。
+function isChineseText(s: string): boolean {
+  const han = (s.match(/[一-鿿]/g) || []).length;
+  return han >= 2;
+}
+
+// voiceIsChinese 该 voice 在其 provider 语义下是否为中文音色。
+//   - minimax: voice_id 前缀 Chinese/Cantonese 视为中文;English_/Japanese_ 不是
+//   - tencent: 音色默认中文可读 → 视为中文(不打扰)
+//   - dashscope(CosyVoice long*): 中文音色
+//   - kling: 按 voice_language,zh 才是中文
+//   - openai: 6 个音色多语可读但非中文专属 —— 这里视为"非中文",但无一键推荐(见 recommendedChineseVoice)
+function voiceIsChinese(vp: VoiceProvider, voice: string, ttsLang?: 'zh' | 'en'): boolean {
+  const v = (voice || '').toLowerCase();
+  switch (vp) {
+    case 'minimax':
+      return v.startsWith('chinese') || v.startsWith('cantonese');
+    case 'tencent':
+    case 'dashscope':
+      return true;
+    case 'kling':
+      return ttsLang !== 'en';
+    default:
+      return false;
+  }
+}
+
+// recommendedChineseVoice 该 provider 的一键推荐中文音色(voice_id);无合适可推荐则 null。
+function recommendedChineseVoice(vp: VoiceProvider): string | null {
+  switch (vp) {
+    case 'minimax':
+      return 'Chinese (Mandarin)_Lyrical_Voice';
+    case 'dashscope':
+      return 'longxiaochun_v2';
+    default:
+      return null;
+  }
+}
+
+// addEmotionRange 把 [start,end) 打上 emotion,并保持所有区间互不重叠:
+// 与新区间相交的旧区间被裁掉相交部分(保留左右残段),中间由新区间覆盖。emotion='' = 清除该选区标注。
+function addEmotionRange(ranges: EmotionRange[], start: number, end: number, emotion: string, idSeed: number): EmotionRange[] {
+  if (start >= end) return ranges;
+  const out: EmotionRange[] = [];
+  for (const r of ranges) {
+    if (r.end <= start || r.start >= end) {
+      out.push(r); // 不相交,原样保留
+      continue;
+    }
+    if (r.start < start) out.push({ ...r, id: `${r.id}L`, end: start }); // 左残段
+    if (r.end > end) out.push({ ...r, id: `${r.id}R`, start: end }); // 右残段
+    // 相交中段被丢弃(由新区间替换)
+  }
+  if (emotion) out.push({ id: `r${idSeed}`, start, end, emotion });
+  return out.sort((a, b) => a.start - b.start);
+}
+
+// buildEmotionChunks 把整段文本按区间切成有序连续块(带情绪块 + 未标注块),预览与提交共用。
+// 区间假定已互不重叠、升序(由 addEmotionRange 保证);越界的区间在此裁剪/丢弃。
+// 相邻同情绪块会被合并 —— 减少无谓切段,保住韵律连续(两段都标"开心"应当连读,而非各发一次)。
+function buildEmotionChunks(text: string, ranges: EmotionRange[]): EmotionChunk[] {
+  const sorted = ranges
+    .filter((r) => r.start < r.end && r.start < text.length)
+    .map((r) => ({ ...r, end: Math.min(r.end, text.length) }))
+    .sort((a, b) => a.start - b.start);
+  const raw: EmotionChunk[] = [];
+  let pos = 0;
+  for (const r of sorted) {
+    if (r.start > pos) raw.push({ text: text.slice(pos, r.start), emotion: '' });
+    raw.push({ text: text.slice(r.start, r.end), emotion: r.emotion });
+    pos = r.end;
+  }
+  if (pos < text.length) raw.push({ text: text.slice(pos), emotion: '' });
+  // 合并相邻同情绪块
+  const merged: EmotionChunk[] = [];
+  for (const c of raw) {
+    const last = merged[merged.length - 1];
+    if (last && last.emotion === c.emotion) last.text += c.text;
+    else merged.push({ ...c });
+  }
+  return merged;
+}
+
+// 只有标点/符号/空白的块 —— 单独合成毫无意义(一个逗号发一次上游),折叠进相邻块。
+const PUNCT_ONLY_RE = /^[\s\p{P}\p{S}]+$/u;
+
+// chunksForSynthesis 把预览块转成"真正要合成"的块:折叠纯标点碎块进上一块(或下一块),再去空 + 去首尾空白。
+function chunksForSynthesis(chunks: EmotionChunk[]): EmotionChunk[] {
+  const folded: EmotionChunk[] = [];
+  for (const c of chunks) {
+    if (PUNCT_ONLY_RE.test(c.text) && folded.length > 0) {
+      folded[folded.length - 1].text += c.text; // 并进上一块(逗号跟着前一句读)
+      continue;
+    }
+    folded.push({ ...c });
+  }
+  return folded.map((c) => ({ ...c, text: c.text.trim() })).filter((c) => c.text.length > 0);
+}
+
+// decodeToBuffer 用一次性 AudioContext 把任意容器(mp3/wav/aac…)解码成 PCM AudioBuffer。
+// decodeAudioData 会把音频重采样到 ctx.sampleRate,所以各段解码后采样率一致,可直接拼接。
+async function decodeToBuffer(ctx: AudioContext, blob: Blob): Promise<AudioBuffer> {
+  const ab = await blob.arrayBuffer();
+  // 老浏览器只认 callback 形态,新浏览器返回 Promise,两种都兜。
+  return await new Promise<AudioBuffer>((resolve, reject) => {
+    const p = ctx.decodeAudioData(ab, resolve, reject);
+    if (p && typeof (p as any).then === 'function') (p as Promise<AudioBuffer>).then(resolve, reject);
+  });
+}
+
+// mergeAudioBuffers 顺序拼接多段 buffer,段间插 gapMs 静音。声道数取最大,缺声道复用 ch0(单→立体声兜底)。
+function mergeAudioBuffers(ctx: AudioContext, buffers: AudioBuffer[], gapMs: number): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const numCh = Math.max(1, ...buffers.map((b) => b.numberOfChannels));
+  const gapFrames = Math.max(0, Math.round((gapMs / 1000) * rate));
+  const totalFrames = buffers.reduce((s, b) => s + b.length, 0) + gapFrames * Math.max(0, buffers.length - 1);
+  const out = ctx.createBuffer(numCh, totalFrames, rate);
+  let offset = 0;
+  buffers.forEach((b, i) => {
+    for (let c = 0; c < numCh; c++) {
+      const src = b.getChannelData(Math.min(c, b.numberOfChannels - 1));
+      out.getChannelData(c).set(src, offset);
+    }
+    offset += b.length + (i < buffers.length - 1 ? gapFrames : 0);
+  });
+  return out;
+}
+
+// encodeWAV 把 AudioBuffer 编码成 16-bit PCM WAV Blob(浏览器原生可播 + 可下载)。
+function encodeWAV(buffer: AudioBuffer): Blob {
+  const numCh = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const numFrames = buffer.length;
+  const blockAlign = numCh * 2; // 16-bit
+  const dataSize = numFrames * blockAlign;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(ab);
+  const writeStr = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataSize, true);
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numCh; c++) channels.push(buffer.getChannelData(c));
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const sample = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([view], { type: 'audio/wav' });
+}
+
 // ---------- 主组件 ----------
 
 export default function VoicePanel() {
   const intl = useIntl();
-  const [mode, setMode] = useState<'asr' | 'tts'>('asr');
+  const [mode, setMode] = useState<'asr' | 'tts' | 'tts-stream'>('asr');
 
   return (
     <div className="pg-voice">
@@ -567,7 +816,7 @@ export default function VoicePanel() {
         <Segmented
           size="large"
           value={mode}
-          onChange={(v) => setMode(v as 'asr' | 'tts')}
+          onChange={(v) => setMode(v as 'asr' | 'tts' | 'tts-stream')}
           options={[
             {
               label: (
@@ -585,10 +834,18 @@ export default function VoicePanel() {
               ),
               value: 'tts',
             },
+            {
+              label: (
+                <span>
+                  <ThunderboltOutlined /> {intl.formatMessage({ id: 'playground.voice.tabTtsStream' })}
+                </span>
+              ),
+              value: 'tts-stream',
+            },
           ]}
         />
       </div>
-      {mode === 'asr' ? <ASRMode /> : <TTSMode />}
+      {mode === 'asr' ? <ASRMode /> : mode === 'tts' ? <TTSMode /> : <TTSStreamMode />}
     </div>
   );
 }
@@ -606,6 +863,7 @@ type ASRModelOpt = {
 function ASRMode() {
   const intl = useIntl();
   const { apiKey } = usePlaygroundApiKey();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [models, setModels] = useState<ASRModelOpt[]>([]);
   const [modelName, setModelName] = useState<string>();
 
@@ -1028,7 +1286,19 @@ function ASRMode() {
             <AudioOutlined /> {intl.formatMessage({ id: 'playground.voice.asr.cardTitle' })}
           </span>
         }
-        extra={<span className="pg-voice-path">POST /v1/audio/transcriptions[/async]</span>}
+        extra={
+          <Space size={10}>
+            <Button
+              size="small"
+              type="text"
+              icon={<HistoryOutlined />}
+              onClick={() => setHistoryOpen(true)}
+            >
+              {intl.formatMessage({ id: 'playground.video.history' })}
+            </Button>
+            <span className="pg-voice-path">POST /v1/audio/transcriptions[/async]</span>
+          </Space>
+        }
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div>
@@ -1353,6 +1623,12 @@ function ASRMode() {
         {/* 异步 failed */}
         {task?.status === 'failed' && <Alert type="error" showIcon message={<span style={{ fontWeight: 500 }}>{task.error_code ? `${task.error_code} · ` : ''}{intl.formatMessage({ id: 'playground.voice.asr.failed' })}</span>} description={<pre className="pg-voice-err-pre">{task.error_msg || errMsg || intl.formatMessage({ id: 'playground.voice.noUpstreamReason' })}</pre>} />}
       </Card>
+      <SpeechHistoryDrawer
+        kind="asr"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }
@@ -1369,10 +1645,16 @@ type TTSModelOpt = {
 function TTSMode() {
   const intl = useIntl();
   const { apiKey } = usePlaygroundApiKey();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [models, setModels] = useState<TTSModelOpt[]>([]);
   const [modelName, setModelName] = useState<string>();
 
   const [text, setText] = useState(() => intl.formatMessage({ id: 'playground.voice.tts.defaultText' }));
+  // 分段情绪子模式:'single' 整段(原有行为)/ 'segments' 划词标注(选中文字→指定情绪),逐段合成后拼接。
+  const [ttsSubMode, setTtsSubMode] = useState<'single' | 'segments'>('single');
+  const [ranges, setRanges] = useState<EmotionRange[]>([]); // 情绪区间标注
+  const [sel, setSel] = useState<{ start: number; end: number }>({ start: 0, end: 0 }); // 文本框当前选区
+  const [segProgress, setSegProgress] = useState<{ cur: number; total: number } | null>(null);
   const [voice, setVoice] = useState<string>('alloy');
   // ttsLang 仅 kling 用:voice_language(zh/en)。同一 voice_id 在两种语种下发音不同,
   // 作为独立轴(voice 仍是纯 voice_id),提交时分开发 body.language。
@@ -1567,9 +1849,93 @@ function TTSMode() {
     }
   };
 
+  // ---- 划词情绪标注操作 ----
+  const emotionLabel = (v: string) => intl.formatMessage({ id: `playground.voice.emotion.${v}`, defaultMessage: v });
+  // applyEmotion 给「当前选区」打情绪(emotion='' = 清除该选区标注)。需先在文本框里选中一段文字。
+  const applyEmotion = (emotion: string) => {
+    if (sel.start >= sel.end) return message.warning(intl.formatMessage({ id: 'playground.voice.tts.tagSelectFirst' }));
+    setRanges((prev) => addEmotionRange(prev, sel.start, sel.end, emotion, Date.now()));
+  };
+  const clearAllTags = () => setRanges([]);
+  // 文本改动会让区间偏移错位 → 直接清空标注,避免"标错段"。分段模式下 textarea 走这个 onChange。
+  const onSegTextChange = (v: string) => {
+    setText(v);
+    if (ranges.length > 0) setRanges([]);
+  };
+  const emotionChunks = buildEmotionChunks(text, ranges);
+  const synthChunks = chunksForSynthesis(emotionChunks); // 真正会合成的块(已折叠标点碎块)
+  const segTotalChars = synthChunks.reduce((n, c) => n + Array.from(c.text).length, 0);
+  const hasTag = ranges.length > 0;
+
+  // submitSegments 按划词标注把整段文本切成有序块,每块各带自己的 emotion 调同步 /v1/audio/speech(强制 wav 便于解码),
+  // 全部解码为 PCM 后用 Web Audio 拼成一条 wav。任一块失败即整体中止并报出是第几块。
+  const submitSegments = async () => {
+    const chunks = chunksForSynthesis(emotionChunks);
+    if (chunks.length === 0) return message.warning(intl.formatMessage({ id: 'playground.voice.tts.segEmpty' }));
+    if (segTotalChars > TTS_ASYNC_CHAR_LIMIT) return message.warning(intl.formatMessage({ id: 'playground.voice.tts.segTotalTooLong' }, { count: segTotalChars, limit: TTS_ASYNC_CHAR_LIMIT }));
+    for (let i = 0; i < chunks.length; i++) {
+      const c = Array.from(chunks[i].text).length;
+      if (c > TTS_SYNC_CHAR_LIMIT) return message.warning(intl.formatMessage({ id: 'playground.voice.tts.segTooLong' }, { n: i + 1, count: c, limit: TTS_SYNC_CHAR_LIMIT }));
+    }
+
+    setSubmitting(true);
+    setErrMsg(null);
+    setTask(null);
+    if (syncResult?.url) URL.revokeObjectURL(syncResult.url);
+    setSyncResult(null);
+    if (pollRef.current) window.clearTimeout(pollRef.current);
+
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    let ctx: AudioContext | null = null;
+    try {
+      // 用请求采样率建 context,让各段解码结果与拼接输出同频(规避 Safari 按原生率解码带来的整体音高偏移)。
+      try {
+        ctx = sampleRate ? new AC({ sampleRate }) : new AC();
+      } catch {
+        ctx = new AC();
+      }
+      const buffers: AudioBuffer[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        setSegProgress({ cur: i + 1, total: chunks.length });
+        const body: any = { model: modelName, input: chunks[i].text, voice, response_format: 'wav', speed };
+        if (sampleRate) body.sample_rate = sampleRate;
+        if (voiceProvider === 'kling') body.language = ttsLang;
+        if (channelName.trim()) body.channel = channelName.trim();
+        if (chunks[i].emotion) body.emotion_category = chunks[i].emotion;
+        const res = await fetch(apiURL('/v1/audio/speech'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const tx = await res.text();
+          const { msg, code } = extractErrMsg(tx, res.status);
+          setErrMsg(intl.formatMessage({ id: 'playground.voice.tts.segFailAt' }, { n: i + 1, msg: friendlyAudioErrorMessage(res.status, msg, code) }));
+          return;
+        }
+        buffers.push(await decodeToBuffer(ctx, await res.blob()));
+      }
+      const merged = mergeAudioBuffers(ctx, buffers, SEG_GAP_MS);
+      const wav = encodeWAV(merged);
+      const objURL = URL.createObjectURL(wav);
+      setSyncResult({ blob: wav, url: objURL, format: 'wav', charCount: segTotalChars, segments: chunks.length });
+    } catch (e: any) {
+      setErrMsg(friendlyAudioErrorMessage(0, String(e?.message || e)));
+    } finally {
+      setSegProgress(null);
+      setSubmitting(false);
+      if (ctx) {
+        try {
+          await ctx.close();
+        } catch {}
+      }
+    }
+  };
+
   const submit = async () => {
     if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.voice.asr.selectModel' }));
     if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+    if (ttsSubMode === 'segments') return submitSegments();
 
     const decided = decideRoute();
     if (typeof decided !== 'string') {
@@ -1650,7 +2016,7 @@ function TTSMode() {
   const isInFlight = task && (task.status === 'queued' || task.status === 'running');
   // 同步 / 异步终态 audio src
   const playableSrc = syncResult?.url || (task?.status === 'succeeded' ? task.audio_url : '') || '';
-  const downloadName = `tts-${modelName || 'audio'}-${Date.now()}.${format}`;
+  const downloadName = `tts-${modelName || 'audio'}-${Date.now()}.${syncResult?.format || format}`;
 
   return (
     <div className="pg-voice-grid">
@@ -1662,7 +2028,19 @@ function TTSMode() {
             <CustomerServiceOutlined /> {intl.formatMessage({ id: 'playground.voice.tts.cardTitle' })}
           </span>
         }
-        extra={<span className="pg-voice-path">POST /v1/audio/speech[/async]</span>}
+        extra={
+          <Space size={10}>
+            <Button
+              size="small"
+              type="text"
+              icon={<HistoryOutlined />}
+              onClick={() => setHistoryOpen(true)}
+            >
+              {intl.formatMessage({ id: 'playground.video.history' })}
+            </Button>
+            <span className="pg-voice-path">POST /v1/audio/speech[/async]</span>
+          </Space>
+        }
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
           <div>
@@ -1738,13 +2116,93 @@ function TTSMode() {
           <ApiKeyField />
 
           <div>
-            <div className="pg-voice-label">
-              {intl.formatMessage({ id: 'playground.voice.tts.textLabel' })}{' '}
-              <span style={{ color: charCount > TTS_SYNC_CHAR_LIMIT ? '#cf1322' : '#888', fontWeight: 400 }}>
-                · {intl.formatMessage({ id: 'playground.voice.tts.charCount' }, { count: charCount })}{charCount > TTS_SYNC_CHAR_LIMIT && ` · ${intl.formatMessage({ id: 'playground.voice.tts.willAsync' }, { limit: TTS_SYNC_CHAR_LIMIT })}`}
+            <div className="pg-voice-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <span>
+                {intl.formatMessage({ id: 'playground.voice.tts.textLabel' })}{' '}
+                <span style={{ color: (ttsSubMode === 'segments' ? segTotalChars : charCount) > TTS_SYNC_CHAR_LIMIT && ttsSubMode === 'single' ? '#cf1322' : '#888', fontWeight: 400 }}>
+                  · {intl.formatMessage({ id: 'playground.voice.tts.charCount' }, { count: ttsSubMode === 'segments' ? segTotalChars : charCount })}
+                  {ttsSubMode === 'single' && charCount > TTS_SYNC_CHAR_LIMIT && ` · ${intl.formatMessage({ id: 'playground.voice.tts.willAsync' }, { limit: TTS_SYNC_CHAR_LIMIT })}`}
+                </span>
               </span>
+              <Segmented
+                size="small"
+                value={ttsSubMode}
+                onChange={(v) => setTtsSubMode(v as 'single' | 'segments')}
+                options={[
+                  { label: intl.formatMessage({ id: 'playground.voice.tts.subModeSingle' }), value: 'single' },
+                  { label: intl.formatMessage({ id: 'playground.voice.tts.subModeSegments' }), value: 'segments' },
+                ]}
+                disabled={submitting || !!isInFlight}
+              />
             </div>
-            <TextArea value={text} onChange={(e) => setText(e.target.value)} autoSize={{ minRows: 4, maxRows: 12 }} placeholder={intl.formatMessage({ id: 'playground.voice.tts.textPh' })} disabled={submitting || !!isInFlight} maxLength={TTS_ASYNC_CHAR_LIMIT} showCount={false} />
+
+            {ttsSubMode === 'single' ? (
+              <TextArea value={text} onChange={(e) => setText(e.target.value)} autoSize={{ minRows: 4, maxRows: 12 }} placeholder={intl.formatMessage({ id: 'playground.voice.tts.textPh' })} disabled={submitting || !!isInFlight} maxLength={TTS_ASYNC_CHAR_LIMIT} showCount={false} />
+            ) : (
+              <div className="pg-voice-seg-editor">
+                <div className="pg-voice-hint" style={{ marginTop: 0, marginBottom: 8 }}>{intl.formatMessage({ id: 'playground.voice.tts.subModeHint' })}</div>
+                {!emotionSupported(voiceProvider) && <Alert type="info" showIcon style={{ marginBottom: 8 }} message={intl.formatMessage({ id: 'playground.voice.tts.emotionIgnoredHint' })} />}
+                {/* 文本框:选中一段文字后,点下面的情绪按钮给这段打标签 */}
+                <TextArea
+                  value={text}
+                  onChange={(e) => onSegTextChange(e.target.value)}
+                  onSelect={(e) => setSel({ start: (e.currentTarget as HTMLTextAreaElement).selectionStart ?? 0, end: (e.currentTarget as HTMLTextAreaElement).selectionEnd ?? 0 })}
+                  autoSize={{ minRows: 3, maxRows: 10 }}
+                  placeholder={intl.formatMessage({ id: 'playground.voice.tts.textPh' })}
+                  disabled={submitting}
+                  maxLength={TTS_ASYNC_CHAR_LIMIT}
+                  showCount={false}
+                />
+                {/* 情绪按钮条:作用于当前选区 */}
+                <div style={{ marginTop: 8 }}>
+                  <span style={{ color: '#888', fontSize: 12 }}>{intl.formatMessage({ id: 'playground.voice.tts.tagApplyHint' })}</span>
+                  <div style={{ marginTop: 6 }}>
+                    <Space wrap size={[6, 6]}>
+                      {EMOTION_CATALOG[voiceProvider].map((v) => (
+                        <Tag key={v} color={emotionColor(v)} style={{ cursor: submitting ? 'not-allowed' : 'pointer', userSelect: 'none', margin: 0, padding: '2px 10px', fontSize: 13 }} onClick={() => !submitting && applyEmotion(v)}>
+                          {emotionLabel(v)}
+                        </Tag>
+                      ))}
+                      <Tag style={{ cursor: submitting ? 'not-allowed' : 'pointer', userSelect: 'none', margin: 0, padding: '2px 10px', fontSize: 13 }} onClick={() => !submitting && applyEmotion('')}>
+                        {intl.formatMessage({ id: 'playground.voice.tts.tagRemove' })}
+                      </Tag>
+                    </Space>
+                  </div>
+                </div>
+                {/* 标注预览:整段文本按情绪高亮 + 段首情绪小标签 */}
+                <div style={{ marginTop: 10 }}>
+                  <div className="pg-voice-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>{intl.formatMessage({ id: 'playground.voice.tts.tagPreviewLabel' })}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ color: '#888', fontWeight: 400, fontSize: 12 }}>{intl.formatMessage({ id: 'playground.voice.tts.segCountLabel' }, { count: synthChunks.length, chars: segTotalChars })}</span>
+                      {hasTag && (
+                        <Button size="small" type="text" danger onClick={clearAllTags} disabled={submitting}>
+                          {intl.formatMessage({ id: 'playground.voice.tts.tagClear' })}
+                        </Button>
+                      )}
+                    </span>
+                  </div>
+                  <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: '10px 12px', minHeight: 44, lineHeight: 2, background: '#fafbfc', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {text.trim().length === 0 ? (
+                      <span style={{ color: '#bbb' }}>{intl.formatMessage({ id: 'playground.voice.tts.tagPreviewEmpty' })}</span>
+                    ) : (
+                      emotionChunks.map((c, i) =>
+                        c.emotion ? (
+                          <span key={i} style={{ background: `${emotionColor(c.emotion)}22`, borderBottom: `2px solid ${emotionColor(c.emotion)}`, borderRadius: 3, padding: '0 2px' }}>
+                            <Tag color={emotionColor(c.emotion)} style={{ marginRight: 4, padding: '0 6px', fontSize: 11, lineHeight: '18px' }}>
+                              {emotionLabel(c.emotion)}
+                            </Tag>
+                            {c.text}
+                          </span>
+                        ) : (
+                          <span key={i}>{c.text}</span>
+                        ),
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="pg-voice-row">
@@ -1819,6 +2277,26 @@ function TTSMode() {
                   </>
                 )}
               </div>
+              {/* 中文文本 + 非中文音色 → 推荐换中文音色(一键切换)。纯提示,不改默认。 */}
+              {isChineseText(text) && !voiceIsChinese(voiceProvider, voice, voiceProvider === 'kling' ? ttsLang : undefined) && (recommendedChineseVoice(voiceProvider) || voiceProvider === 'kling') && (
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginTop: 8 }}
+                  message={intl.formatMessage({ id: 'playground.voice.tts.zhVoiceRecommend' })}
+                  action={
+                    recommendedChineseVoice(voiceProvider) ? (
+                      <Button size="small" type="primary" ghost onClick={() => setVoice(recommendedChineseVoice(voiceProvider)!)} disabled={submitting || !!isInFlight}>
+                        {intl.formatMessage({ id: 'playground.voice.tts.zhVoiceSwitch' }, { voice: recommendedChineseVoice(voiceProvider) })}
+                      </Button>
+                    ) : (
+                      <Button size="small" type="primary" ghost onClick={() => setTtsLang('zh')} disabled={submitting || !!isInFlight}>
+                        {intl.formatMessage({ id: 'playground.voice.tts.zhVoiceSwitchLang' })}
+                      </Button>
+                    )
+                  }
+                />
+              )}
             </div>
           </div>
 
@@ -1851,34 +2329,49 @@ function TTSMode() {
             </div>
             <div style={{ flex: 1 }}>
               <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.tts.sampleRate' })}</div>
-              <Select
+              {/* AutoComplete:给常用档位候选,同时永远支持自由填写任意采样率(Hz),清空则不发 sample_rate 走上游默认 */}
+              <AutoComplete
                 style={{ width: '100%' }}
-                value={sampleRate}
-                onChange={setSampleRate}
+                value={sampleRate != null ? String(sampleRate) : ''}
+                onChange={(v) => {
+                  const digits = String(v ?? '').replace(/[^\d]/g, '');
+                  setSampleRate(digits ? parseInt(digits, 10) : undefined);
+                }}
                 options={[
-                  { value: 8000, label: '8000 Hz' },
-                  { value: 16000, label: intl.formatMessage({ id: 'playground.voice.tts.rate16k' }) },
-                  { value: 22050, label: '22050 Hz' },
-                  { value: 24000, label: '24000 Hz' },
+                  { value: '8000', label: '8000 Hz' },
+                  { value: '16000', label: intl.formatMessage({ id: 'playground.voice.tts.rate16k' }) },
+                  { value: '22050', label: '22050 Hz' },
+                  { value: '24000', label: '24000 Hz' },
+                  { value: '32000', label: '32000 Hz' },
+                  { value: '44100', label: '44100 Hz' },
+                  { value: '48000', label: '48000 Hz' },
+                ]}
+                filterOption={(input, option) => String(option?.value ?? '').includes(input.replace(/[^\d]/g, ''))}
+                placeholder="Hz"
+                disabled={submitting || !!isInFlight}
+                allowClear
+              />
+              <div className="pg-voice-hint" style={{ marginTop: 4 }}>{intl.formatMessage({ id: 'playground.voice.tts.rateHint' })}</div>
+            </div>
+          </div>
+
+          {ttsSubMode === 'single' ? (
+            <div>
+              <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.routeMode' })}</div>
+              <Segmented
+                value={routeMode}
+                onChange={(v) => setRouteMode(v as RouteMode)}
+                options={[
+                  { value: 'auto', label: intl.formatMessage({ id: 'playground.voice.routeAuto' }) },
+                  { value: 'sync', label: intl.formatMessage({ id: 'playground.voice.routeSync' }) },
+                  { value: 'async', label: intl.formatMessage({ id: 'playground.voice.routeAsync' }) },
                 ]}
                 disabled={submitting || !!isInFlight}
               />
             </div>
-          </div>
-
-          <div>
-            <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.routeMode' })}</div>
-            <Segmented
-              value={routeMode}
-              onChange={(v) => setRouteMode(v as RouteMode)}
-              options={[
-                { value: 'auto', label: intl.formatMessage({ id: 'playground.voice.routeAuto' }) },
-                { value: 'sync', label: intl.formatMessage({ id: 'playground.voice.routeSync' }) },
-                { value: 'async', label: intl.formatMessage({ id: 'playground.voice.routeAsync' }) },
-              ]}
-              disabled={submitting || !!isInFlight}
-            />
-          </div>
+          ) : (
+            <div className="pg-voice-hint">{intl.formatMessage({ id: 'playground.voice.tts.segRouteHint' })}</div>
+          )}
 
           <details>
             <summary style={{ cursor: 'pointer', color: '#666', fontSize: 13 }}>{intl.formatMessage({ id: 'playground.voice.advanced' })}</summary>
@@ -1888,8 +2381,14 @@ function TTSMode() {
             </div>
           </details>
 
-          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !apiKey || !!isInFlight || charCount === 0}>
-            {submitting ? intl.formatMessage({ id: 'playground.voice.submitting' }) : isInFlight ? intl.formatMessage({ id: 'playground.voice.tts.synthesizing' }) : intl.formatMessage({ id: 'playground.voice.tts.startSynthesize' })}
+          <Button type="primary" size="large" block icon={submitting ? <LoadingOutlined /> : <SendOutlined />} onClick={submit} loading={submitting} disabled={!modelName || !apiKey || !!isInFlight || (ttsSubMode === 'single' ? charCount === 0 : segTotalChars === 0)}>
+            {submitting
+              ? segProgress
+                ? intl.formatMessage({ id: 'playground.voice.tts.segSynthProgress' }, { cur: segProgress.cur, total: segProgress.total })
+                : intl.formatMessage({ id: 'playground.voice.submitting' })
+              : isInFlight
+                ? intl.formatMessage({ id: 'playground.voice.tts.synthesizing' })
+                : intl.formatMessage({ id: 'playground.voice.tts.startSynthesize' })}
           </Button>
         </Space>
       </Card>
@@ -1941,7 +2440,7 @@ function TTSMode() {
               {task?.status && <Tag color={statusColor(task.status)}>{statusText(task.status)}</Tag>}
               {syncResult && (
                 <>
-                  <Tag color="green">{intl.formatMessage({ id: 'playground.voice.tts.syncTag' })}</Tag>
+                  {syncResult.segments ? <Tag color="purple">{intl.formatMessage({ id: 'playground.voice.tts.segMergedTag' }, { count: syncResult.segments })}</Tag> : <Tag color="green">{intl.formatMessage({ id: 'playground.voice.tts.syncTag' })}</Tag>}
                   <span>{formatBytes(syncResult.blob.size)}</span>
                 </>
               )}
@@ -1973,6 +2472,411 @@ function TTSMode() {
 
         {/* 兜底:终态 succeeded 但 audio_url 为空 */}
         {task?.status === 'succeeded' && !task.audio_url && <Alert type="info" showIcon message={intl.formatMessage({ id: 'playground.voice.tts.audioUrlEmpty' })} description={intl.formatMessage({ id: 'playground.voice.tts.audioUrlEmptyDesc' })} />}
+      </Card>
+      <SpeechHistoryDrawer
+        kind="tts"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
+    </div>
+  );
+}
+
+// ---------- 流式 TTS 子模式(WebSocket · 会话历史) ----------
+
+// StreamEntry 一条流式合成记录。history 保留多条 → 会话式回放(区别于同步 TTS 只留最后一条)。
+type StreamEntry = {
+  id: string;
+  ts: number;
+  text: string;
+  voice: string;
+  format: string;
+  status: 'streaming' | 'done' | 'error';
+  frames: number;
+  bytes: number;
+  url?: string;
+  blobSize?: number;
+  charCount?: number;
+  requestId?: string;
+  errMsg?: string;
+};
+
+function TTSStreamMode() {
+  const intl = useIntl();
+  const { apiKey } = usePlaygroundApiKey();
+  const [models, setModels] = useState<TTSModelOpt[]>([]);
+  const [modelName, setModelName] = useState<string>();
+  const [text, setText] = useState(() => intl.formatMessage({ id: 'playground.voice.tts.defaultText' }));
+  const [voice, setVoice] = useState('');
+  const [clonedVoices, setClonedVoices] = useState<{ voice_id: string; display_name: string; provider_type: string }[]>([]);
+  const [speed, setSpeed] = useState(1.0);
+  const [format, setFormat] = useState('mp3');
+  const [sampleRate, setSampleRate] = useState<number | undefined>(24000);
+  const [channelName, setChannelName] = useState('');
+  const [running, setRunning] = useState(false);
+  const [history, setHistory] = useState<StreamEntry[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const historyRef = useRef<StreamEntry[]>([]);
+  historyRef.current = history;
+  const idSeq = useRef(0);
+
+  const charCount = Array.from(text).length;
+
+  // 只列支持 WS 流式的模型(provider_type=tts_tencent_stream)。
+  useEffect(() => {
+    systemApi
+      .models()
+      .then((res) => {
+        const list: TTSModelOpt[] = ((res.data as any[]) || [])
+          .filter((m) => m.enabled !== false && classifyAudioModel(m) === 'tts' && isStreamingTTSProvider(m.provider_type))
+          .map((m) => ({ value: m.name, label: m.display_name ? m.display_name : m.name, verified: audioVerified(m), providerInfo: audioProviderInfo(m) }))
+          .sort((a, b) => a.value.localeCompare(b.value));
+        setModels(list);
+        setModelName((prev) => (prev && list.some((x) => x.value === prev) ? prev : list[0]?.value));
+      })
+      .catch(() => {});
+  }, []);
+
+  // 拉用户克隆音色(ready)做建议;流式只取腾讯系(MPS voiceId 可直接用)。
+  useEffect(() => {
+    if (!apiKey) {
+      setClonedVoices([]);
+      return;
+    }
+    let aborted = false;
+    fetch(apiURL('/v1/audio/voice_clones'), { headers: { Authorization: `Bearer ${apiKey}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (aborted || !body) return;
+        const rows = (body.data as any[]) || [];
+        setClonedVoices(rows.filter((v) => v.status === 'ready' && v.voice_id).map((v) => ({ voice_id: v.voice_id, display_name: v.display_name || v.voice_id, provider_type: v.provider_type || '' })));
+      })
+      .catch(() => {
+        if (!aborted) setClonedVoices([]);
+      });
+    return () => {
+      aborted = true;
+    };
+  }, [apiKey]);
+
+  // 卸载:关连接 + 释放所有历史音频 URL(blob 只活在本次会话内)。
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) {
+        try {
+          wsRef.current.close();
+        } catch {
+          /* noop */
+        }
+        wsRef.current = null;
+      }
+      historyRef.current.forEach((e) => e.url && URL.revokeObjectURL(e.url));
+    };
+  }, []);
+
+  const voiceSuggestions = clonedVoices.filter((c) => c.provider_type.toLowerCase().includes('tencent')).map((c) => ({ value: c.voice_id, label: `🎤 ${intl.formatMessage({ id: 'playground.voice.tts.myClone' }, { name: c.display_name, id: c.voice_id })}` }));
+
+  const patchEntry = (id: string, patch: Partial<StreamEntry>) => {
+    setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  };
+
+  const start = () => {
+    if (!modelName) return message.warning(intl.formatMessage({ id: 'playground.voice.asr.selectModel' }));
+    if (!apiKey) return message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+    if (charCount === 0) return;
+    if (!voice.trim()) return message.warning(intl.formatMessage({ id: 'playground.voice.ttsStream.voicePh' }));
+
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch {
+        /* noop */
+      }
+      wsRef.current = null;
+    }
+
+    idSeq.current += 1;
+    const id = `s${idSeq.current}`;
+    const entry: StreamEntry = { id, ts: Date.now(), text, voice: voice.trim(), format, status: 'streaming', frames: 0, bytes: 0 };
+    setHistory((prev) => [entry, ...prev]);
+    setRunning(true);
+
+    const u = new URL(apiURL('/v1/audio/speech/ws'), window.location.origin);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    u.searchParams.set('model', modelName);
+    u.searchParams.set('voice', voice.trim());
+    u.searchParams.set('response_format', format);
+    if (sampleRate) u.searchParams.set('sample_rate', String(sampleRate));
+    if (speed) u.searchParams.set('speed', String(speed));
+    if (channelName.trim()) u.searchParams.set('channel', channelName.trim());
+    u.searchParams.set('authorization', apiKey);
+
+    const chunks: ArrayBuffer[] = [];
+    let frames = 0;
+    let bytes = 0;
+    let finished = false;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(u.toString());
+    } catch (e: any) {
+      patchEntry(id, { status: 'error', errMsg: String(e?.message || e) });
+      setRunning(false);
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    wsRef.current = ws;
+
+    // 兜底:30s 内既无音频帧也无 done/error → 判为连接异常(常见:dev 代理未开 ws:true、
+    // 后端无 /v1/audio/speech/ws 路由、渠道/凭证错误),避免永远卡在「合成中…」。
+    let idleTimer: number | undefined;
+
+    const finish = () => {
+      finished = true;
+      if (idleTimer) window.clearTimeout(idleTimer);
+      setRunning(false);
+      if (wsRef.current === ws) wsRef.current = null;
+      try {
+        ws.close();
+      } catch {
+        /* noop */
+      }
+    };
+
+    idleTimer = window.setTimeout(() => {
+      if (finished || frames > 0) return;
+      patchEntry(id, { status: 'error', errMsg: intl.formatMessage({ id: 'playground.voice.ttsStream.timeout' }) });
+      finish();
+    }, 30000);
+
+    ws.onopen = () => ws.send(JSON.stringify({ text: entry.text, final: true }));
+
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === 'string') {
+        let obj: any;
+        try {
+          obj = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (obj.type === 'done') {
+          const blob = new Blob(chunks, { type: ttsMimeOf(format) });
+          const url = URL.createObjectURL(blob);
+          patchEntry(id, { status: 'done', url, blobSize: blob.size, charCount: obj.char_count || charCount, requestId: obj.request_id, frames, bytes });
+          finish();
+        } else if (obj.type === 'error') {
+          patchEntry(id, { status: 'error', errMsg: friendlyAudioErrorMessage(0, obj.message || 'stream error', obj.code != null ? String(obj.code) : undefined) });
+          finish();
+        }
+        return;
+      }
+      const buf = ev.data as ArrayBuffer;
+      chunks.push(buf);
+      frames += 1;
+      bytes += buf.byteLength;
+      patchEntry(id, { frames, bytes });
+    };
+
+    ws.onerror = () => {
+      if (finished) return;
+      patchEntry(id, { status: 'error', errMsg: intl.formatMessage({ id: 'playground.voice.tts.wsError' }) });
+      finish();
+    };
+
+    ws.onclose = () => {
+      if (finished) return;
+      if (chunks.length > 0) {
+        const blob = new Blob(chunks, { type: ttsMimeOf(format) });
+        const url = URL.createObjectURL(blob);
+        patchEntry(id, { status: 'done', url, blobSize: blob.size, frames, bytes });
+      } else {
+        patchEntry(id, { status: 'error', errMsg: intl.formatMessage({ id: 'playground.voice.tts.wsClosed' }) });
+      }
+      finish();
+    };
+  };
+
+  const clearHistory = () => {
+    historyRef.current.forEach((e) => e.url && URL.revokeObjectURL(e.url));
+    setHistory([]);
+  };
+
+  return (
+    <div className="pg-voice-grid">
+      {/* 左:输入 */}
+      <Card
+        className="pg-voice-card"
+        title={
+          <span>
+            <ThunderboltOutlined /> {intl.formatMessage({ id: 'playground.voice.ttsStream.cardTitle' })}
+          </span>
+        }
+        extra={<span className="pg-voice-path">WS /v1/audio/speech/ws</span>}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <div>
+            <div className="pg-voice-label">
+              {intl.formatMessage({ id: 'playground.voice.modelLabel' })}
+              <span style={{ marginLeft: 8, fontWeight: 400, color: '#888', fontSize: 12 }}>· {intl.formatMessage({ id: 'playground.voice.candidateCount' }, { count: models.length })}</span>
+            </div>
+            <Select
+              style={{ width: '100%' }}
+              placeholder={models.length === 0 ? intl.formatMessage({ id: 'playground.voice.ttsStream.noModel' }) : intl.formatMessage({ id: 'playground.voice.tts.selectModelPh' })}
+              value={modelName}
+              onChange={setModelName}
+              options={models.map((m) => ({ value: m.value, label: m.label }))}
+              disabled={running}
+            />
+          </div>
+
+          <div>
+            <div className="pg-voice-label">voiceId</div>
+            <AutoComplete
+              style={{ width: '100%' }}
+              value={voice}
+              onChange={(v) => setVoice(typeof v === 'string' ? v : '')}
+              options={voiceSuggestions}
+              placeholder={intl.formatMessage({ id: 'playground.voice.ttsStream.voicePh' })}
+              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+              allowClear
+              disabled={running}
+            />
+          </div>
+
+          <div>
+            <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.tts.textLabel' })}</div>
+            <TextArea value={text} onChange={(e) => setText(e.target.value)} autoSize={{ minRows: 4, maxRows: 12 }} placeholder={intl.formatMessage({ id: 'playground.voice.tts.textPh' })} disabled={running} />
+          </div>
+
+          <div className="pg-voice-row">
+            <div style={{ flex: 1 }}>
+              <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.tts.format' })}</div>
+              <Select
+                style={{ width: '100%' }}
+                value={format}
+                onChange={setFormat}
+                options={[
+                  { value: 'mp3', label: intl.formatMessage({ id: 'playground.voice.tts.fmtMp3' }) },
+                  { value: 'wav', label: 'wav' },
+                  { value: 'opus', label: 'opus' },
+                  { value: 'pcm', label: intl.formatMessage({ id: 'playground.voice.tts.fmtPcm' }) },
+                ]}
+                disabled={running}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.tts.sampleRate' })}</div>
+              {/* AutoComplete:给常用档位候选,同时永远支持自由填写任意采样率(Hz),清空则不发 sample_rate 走上游默认 */}
+              <AutoComplete
+                style={{ width: '100%' }}
+                value={sampleRate != null ? String(sampleRate) : ''}
+                onChange={(v) => {
+                  const digits = String(v ?? '').replace(/[^\d]/g, '');
+                  setSampleRate(digits ? parseInt(digits, 10) : undefined);
+                }}
+                options={[
+                  { value: '16000', label: intl.formatMessage({ id: 'playground.voice.tts.rate16k' }) },
+                  { value: '22050', label: '22050 Hz' },
+                  { value: '24000', label: '24000 Hz' },
+                  { value: '32000', label: '32000 Hz' },
+                  { value: '44100', label: '44100 Hz' },
+                  { value: '48000', label: '48000 Hz' },
+                ]}
+                filterOption={(input, option) => String(option?.value ?? '').includes(input.replace(/[^\d]/g, ''))}
+                placeholder="Hz"
+                disabled={running}
+                allowClear
+              />
+              <div className="pg-voice-hint" style={{ marginTop: 4 }}>{intl.formatMessage({ id: 'playground.voice.tts.rateHint' })}</div>
+            </div>
+          </div>
+
+          <div className="pg-voice-row">
+            <div style={{ flex: 1 }}>
+              <div className="pg-voice-label">
+                {intl.formatMessage({ id: 'playground.voice.tts.speed' })} <span style={{ color: '#888', fontWeight: 400 }}>· {speed.toFixed(2)}x</span>
+              </div>
+              <Slider min={0.5} max={2.0} step={0.1} value={speed} onChange={(v) => setSpeed(v as number)} marks={{ 0.5: '0.5x', 1: '1x', 2: '2x' }} disabled={running} />
+            </div>
+          </div>
+
+          <details>
+            <summary style={{ cursor: 'pointer', color: '#666', fontSize: 13 }}>{intl.formatMessage({ id: 'playground.voice.advanced' })}</summary>
+            <div style={{ marginTop: 12 }}>
+              <div className="pg-voice-label">{intl.formatMessage({ id: 'playground.voice.channelName' })}</div>
+              <Input placeholder={intl.formatMessage({ id: 'playground.voice.channelPh' })} value={channelName} onChange={(e) => setChannelName(e.target.value)} disabled={running} />
+            </div>
+          </details>
+
+          <Button type="primary" size="large" block icon={running ? <LoadingOutlined /> : <ThunderboltOutlined />} onClick={start} loading={running} disabled={!modelName || !apiKey || charCount === 0}>
+            {running ? intl.formatMessage({ id: 'playground.voice.ttsStream.streaming' }) : intl.formatMessage({ id: 'playground.voice.ttsStream.start' })}
+          </Button>
+        </Space>
+      </Card>
+
+      {/* 右:会话历史 */}
+      <Card
+        className="pg-voice-card"
+        title={<span>{intl.formatMessage({ id: 'playground.voice.ttsStream.historyTitle' })}</span>}
+        extra={
+          history.length > 0 ? (
+            <Button size="small" icon={<DeleteOutlined />} onClick={clearHistory}>
+              {intl.formatMessage({ id: 'playground.voice.ttsStream.clearAll' })}
+            </Button>
+          ) : null
+        }
+      >
+        {history.length === 0 && (
+          <div className="pg-voice-empty">
+            <Empty image={<ThunderboltOutlined style={{ fontSize: 48, color: '#ccc' }} />} imageStyle={{ height: 60 }} description={<span style={{ color: '#999' }}>{intl.formatMessage({ id: 'playground.voice.ttsStream.emptyHint' })}</span>} />
+          </div>
+        )}
+
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          {history.map((e) => (
+            <div key={e.id} style={{ border: '1px solid #eee', borderRadius: 8, padding: 12 }}>
+              <div className="pg-voice-result-meta" style={{ marginBottom: 8 }}>
+                {e.status === 'streaming' && <Tag color="processing">{intl.formatMessage({ id: 'playground.voice.tts.wsReceiving' }, { frames: e.frames, bytes: formatBytes(e.bytes) })}</Tag>}
+                {e.status === 'done' && <Tag color="success">{intl.formatMessage({ id: 'playground.voice.ttsStream.done' })}</Tag>}
+                {e.status === 'error' && <Tag color="error">{intl.formatMessage({ id: 'playground.voice.ttsStream.failed' })}</Tag>}
+                <span style={{ color: '#888' }}>{new Date(e.ts).toLocaleTimeString()}</span>
+                <span style={{ color: '#888' }}>voice <code>{e.voice}</code></span>
+                {e.status !== 'streaming' && (
+                  <span style={{ color: '#888' }}>
+                    {e.frames} {intl.formatMessage({ id: 'playground.voice.ttsStream.framesUnit' })} · {formatBytes(e.bytes)}
+                  </span>
+                )}
+                {e.charCount !== undefined && (
+                  <span style={{ color: '#888' }}>
+                    {intl.formatMessage({ id: 'playground.voice.tts.charCountLabel' })} <b>{e.charCount}</b>
+                  </span>
+                )}
+              </div>
+
+              <div style={{ color: '#333', fontSize: 13, marginBottom: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{e.text}</div>
+
+              {e.status === 'streaming' && (
+                <div style={{ color: '#999', fontSize: 12 }}>
+                  <LoadingOutlined /> {intl.formatMessage({ id: 'playground.voice.tts.wsReceiving' }, { frames: e.frames, bytes: formatBytes(e.bytes) })}
+                </div>
+              )}
+
+              {e.url && (
+                <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                  <audio src={e.url} controls style={{ width: '100%' }} />
+                  <a href={e.url} download={`tts-stream-${e.id}.${e.format}`}>
+                    <Button size="small" icon={<DownloadOutlined />} type="primary" ghost>
+                      {intl.formatMessage({ id: 'playground.voice.ttsStream.download' })}
+                    </Button>
+                  </a>
+                </Space>
+              )}
+
+              {e.status === 'error' && e.errMsg && <Alert type="error" showIcon message={<pre className="pg-voice-err-pre">{e.errMsg}</pre>} />}
+            </div>
+          ))}
+        </Space>
       </Card>
     </div>
   );

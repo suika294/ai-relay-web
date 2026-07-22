@@ -602,6 +602,19 @@ while (true) {
           )}
         </p>
       </Callout>
+      <Callout type="info" title={intl.formatMessage({ id: 'docs.videos.openaiAliasCalloutTitle' })}>
+        <p style={{ margin: 0 }}>
+          {intl.formatMessage(
+            { id: 'docs.videos.openaiAliasCalloutDesc' },
+            {
+              f1: <code>input_video</code>,
+              f2: <code>input_reference</code>,
+              ref: <code>reference_video</code>,
+              first: <code>first_frame_image</code>,
+            },
+          )}
+        </p>
+      </Callout>
 
       <h2 id="multiframe">{intl.formatMessage({ id: 'docs.videos.multiframeHeading' })}</h2>
       <p>

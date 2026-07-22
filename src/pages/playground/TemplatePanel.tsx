@@ -3,6 +3,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   ReloadOutlined,
   SendOutlined,
@@ -31,6 +32,7 @@ import { browserDownloadName, publicMediaURL } from '@/utils/media';
 import { apiURL } from '@/utils/request';
 import { t } from '@/utils/i18n';
 import ApiKeyField from './ApiKeyField';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 import { usePlaygroundApiKey } from './apiKeyStore';
 import { playgroundUpload } from './upload';
 
@@ -153,6 +155,7 @@ export default function TemplatePanel() {
   const [area, setArea] = useState<string>('auto');
   const [beast, setBeast] = useState<string>('auto');
 
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [polling, setPolling] = useState(false);
@@ -311,6 +314,7 @@ export default function TemplatePanel() {
     try {
       const body: any = {
         model: TEMPLATE_MODEL,
+        task_type: 'template',
         template: effectiveTemplate,
         images: images.map((x) => x.url),
         aspect_ratio: aspectRatio,
@@ -394,7 +398,19 @@ export default function TemplatePanel() {
               <AppstoreOutlined /> {intl.formatMessage({ id: 'playground.template.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             {!hasModel && (
@@ -719,6 +735,14 @@ export default function TemplatePanel() {
         </a>
         {intl.formatMessage({ id: 'playground.template.footerSuffix' })}
       </div>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="template"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

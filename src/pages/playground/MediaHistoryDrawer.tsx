@@ -70,6 +70,9 @@ export interface MediaHistoryDrawerProps {
   onClose: () => void;
   // 公开 Playground 用 sk- key 拉历史(不依赖登录态)。没有 key 时抽屉提示先填 key,不发请求。
   apiKey?: string;
+  // taskType 仅对 kind='video' 生效:视频家族子面板(特效/多帧/…)只显示自己子功能的历史。
+  // 不传 → 基础「视频」面板行为不变,列出该 key 全部视频任务。
+  taskType?: string;
   // 通知父组件"重新把这条的 prompt 填回输入框" —— 回头可再生一张
   onReuse?: (task: API.MediaTask) => void;
 }
@@ -79,6 +82,7 @@ export default function MediaHistoryDrawer({
   open,
   onClose,
   apiKey,
+  taskType,
   onReuse,
 }: MediaHistoryDrawerProps) {
   const intl = useIntl();
@@ -96,7 +100,7 @@ export default function MediaHistoryDrawer({
     setTotal(0);
     loadPage(1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, kind, apiKey]);
+  }, [open, kind, apiKey, taskType]);
 
   const loadPage = async (p: number, replace: boolean) => {
     if (!apiKey) {
@@ -111,7 +115,10 @@ export default function MediaHistoryDrawer({
     try {
       // 走 sk- key 鉴权的列表接口(APIKeyAuth),拉本 key 主人名下的历史,不依赖登录态。
       const path = kind === 'image' ? '/v1/images/generations' : '/v1/videos/generations';
-      const resp = await fetch(apiURL(`${path}?page=${p}&size=${PAGE_SIZE}`), {
+      // 视频家族子面板带 task_type 只拉自己子功能的历史;image / 基础视频不带,行为不变。
+      const typeQuery =
+        kind === 'video' && taskType ? `&task_type=${encodeURIComponent(taskType)}` : '';
+      const resp = await fetch(apiURL(`${path}?page=${p}&size=${PAGE_SIZE}${typeQuery}`), {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       const res = (await resp.json()) as API.Response<{ list: API.MediaTask[]; total: number }>;

@@ -15,7 +15,6 @@ import {
   Button,
   Card,
   Empty,
-  Image,
   Input,
   InputNumber,
   message,
@@ -25,7 +24,6 @@ import {
   Tag,
   Upload,
 } from 'antd';
-import type { UploadProps } from 'antd';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from '@umijs/max';
 import { systemApi } from '@/services/api';
@@ -107,31 +105,6 @@ type VideoTask = {
   error?: { code?: string; message: string };
 };
 
-type VideoImageRole = 'first_frame' | 'last_frame' | 'reference';
-
-type ReferenceImage = {
-  uid: string;
-  url: string;
-  name: string;
-  assetId?: number;
-  source: 'upload' | 'url';
-  // role:首帧 / 尾帧 / 参考图。提交时按 role 分桶到 first_frame_image /
-  // last_frame_image / images 三类字段。
-  role: VideoImageRole;
-};
-
-const VIDEO_ROLE_OPTIONS: { value: VideoImageRole; label: string }[] = [
-  { value: 'first_frame', label: t('playground.video.roleFirstFrame') },
-  { value: 'last_frame', label: t('playground.video.roleLastFrame') },
-  { value: 'reference', label: t('playground.video.roleReference') },
-];
-
-const VIDEO_ROLE_BADGE: Record<VideoImageRole, { text: string; bg: string }> = {
-  first_frame: { text: t('playground.video.roleFirstFrame'), bg: 'rgba(22,119,255,0.92)' },
-  last_frame: { text: t('playground.video.roleLastFrame'), bg: 'rgba(82,196,26,0.92)' },
-  reference: { text: t('playground.video.roleReference'), bg: 'rgba(250,140,22,0.92)' },
-};
-
 function hasPrivateVideoURL(t?: VideoTask | null): boolean {
   return isAuthenticatedGeminiDownloadURL(t?.data?.[0]?.url);
 }
@@ -207,29 +180,45 @@ function statusText(s: string): string {
   return m[s] || s;
 }
 
+// VideoRefEntry —— 统一参考列表的一条:Category(Image/Video/Audio)× 来源(真人素材 asset:// / 上传 / URL)
+// × Usage(首帧/尾帧/参考)。这是视频生成唯一的参考入口 —— 提交时同时产出 typed 字段(通用,喂所有上游)
+// 与顶层 file_infos(完整,喂腾讯云图 VS + 后端翻译层)。
+type VideoRefEntry = {
+  id: string;
+  category: 'Image' | 'Video' | 'Audio';
+  usage: 'Reference' | 'FirstFrame' | 'LastFrame';
+  source: 'material' | 'url';
+  assetId?: string; // source=material 时的 upstream_asset_id(asset-xxx,真人素材)
+  url?: string; // source=url 时的公网 URL(上传回填或手填)
+  name?: string; // 展示名(上传文件名)
+  uploading?: boolean;
+};
+
+let videoRefSeq = 0;
+const newVideoRefId = () => `ref-${++videoRefSeq}`;
+
 export default function VideoPanel() {
   const intl = useIntl();
-  const [models, setModels] = useState<{ value: string; label: string }[]>([]);
+  const [models, setModels] = useState<
+    { value: string; label: string; supportsReferenceVideo: boolean }[]
+  >([]);
   const { apiKey } = usePlaygroundApiKey();
   const [modelName, setModelName] = useState<string>();
   const [prompt, setPrompt] = useState('');
-  const [imageURL, setImageURL] = useState('');
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [duration, setDuration] = useState<number | undefined>(5);
   const [resolution, setResolution] = useState<string | undefined>('1080p');
   // 画面比例 / 有声无声:默认 undefined = 不指定(不发,保持各模型默认);只在用户选了才进 body。
   const [aspectRatio, setAspectRatio] = useState<string | undefined>(undefined);
   const [audio, setAudio] = useState<'on' | 'off' | undefined>(undefined);
-  // AIGC 素材引用(豆包 VS 等):选一条 ready 素材 → 拼 asset://<AssetId> 进 extra.file_infos。
+  // 统一参考列表:N 条参考,每条 Category(图/视频/音频)× 来源(真人素材 asset:// / 上传 / URL)× Usage(首帧/尾帧/参考)。
+  // 提交时同时产出 typed 字段(通用)与顶层 file_infos(完整)。prompt 即文本参考 —— 文/图/音/视频四类可两两组合。
   const [materials, setMaterials] = useState<
     { id: number; asset_type: string; upstream_asset_id: string; display_name?: string; is_real_person: boolean }[]
   >([]);
-  const [materialAssetId, setMaterialAssetId] = useState<string | undefined>(undefined);
-  const [materialCategory, setMaterialCategory] = useState<string>('Image');
   const [materialsLoading, setMaterialsLoading] = useState(false);
+  const [refEntries, setRefEntries] = useState<VideoRefEntry[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
-  const [uploadingRef, setUploadingRef] = useState(false);
   const [polling, setPolling] = useState(false);
   const [task, setTask] = useState<VideoTask | null>(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -246,6 +235,8 @@ export default function VideoPanel() {
         .map((m) => ({
           value: m.name,
           label: m.display_name ? `${m.display_name}` : m.name,
+          // config.supports_reference_video → 只有声明了才把视频参考写进 typed reference_video(否则后端 400)。
+          supportsReferenceVideo: !!m.config?.supports_reference_video,
         }));
       setModels(list);
       if (list.length > 0) setModelName((prev) => prev ?? list[0].value);
@@ -303,107 +294,60 @@ export default function VideoPanel() {
     fetchMaterials();
   }, [fetchMaterials]);
 
-  const isSeedanceModel = isDoubaoSeedanceModel(modelName);
-  const requiresPublicReferenceURL = isSeedanceModel || isViduModel(modelName);
-
-  // defaultRoleForNew 决定新添加的参考图初始 role:第一张当首帧,第二张当尾帧,
-  // 第三张起按"参考",更贴近用户最常见的"首帧/首尾帧/多参考"流程。'auto' 给那些
-  // 显式不想标的(legacy 行为)。
-  const defaultRoleForNew = (existing: ReferenceImage[]): VideoImageRole => {
-    if (!existing.some((x) => x.role === 'first_frame')) return 'first_frame';
-    if (!existing.some((x) => x.role === 'last_frame')) return 'last_frame';
-    return 'reference';
-  };
-
-  const addReferenceURL = () => {
-    const url = imageURL.trim();
-    if (!url) return message.warning(intl.formatMessage({ id: 'playground.video.warnInputRefUrl' }));
-    if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
-      return message.warning(intl.formatMessage({ id: 'playground.video.warnPublicRefUrl' }));
+  // ---- AIGC 多参考行操作 ----
+  const addRefEntry = () =>
+    setRefEntries((p) => [...p, { id: newVideoRefId(), category: 'Image', usage: 'Reference', source: 'material' }]);
+  const removeRefEntry = (id: string) => setRefEntries((p) => p.filter((e) => e.id !== id));
+  const patchRefEntry = (id: string, patch: Partial<VideoRefEntry>) =>
+    setRefEntries((p) => p.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  const uploadRefEntryFile = async (id: string, file: File) => {
+    if (!apiKey) {
+      message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+      return;
     }
-    setReferenceImages((prev) => {
-      if (prev.some((x) => x.url === url)) return prev;
-      return [
-        ...prev,
-        {
-          uid: `url-${Date.now()}`,
-          url,
-          name: intl.formatMessage({ id: 'playground.video.externalUrlName' }),
-          source: 'url',
-          role: defaultRoleForNew(prev),
-        },
-      ];
-    });
-    setImageURL('');
+    patchRefEntry(id, { uploading: true });
+    try {
+      const { url } = await playgroundUpload(file, apiKey, { module: 'video_ref' });
+      patchRefEntry(id, { url, uploading: false });
+    } catch (e: any) {
+      patchRefEntry(id, { uploading: false });
+      message.error(e?.message || 'upload failed');
+    }
+  };
+  // 按 MIME/扩展名推断参考类型,批量上传时用。
+  const inferRefCategory = (file: File): 'Image' | 'Video' | 'Audio' => {
+    const t = (file.type || '').toLowerCase();
+    if (t.startsWith('image/')) return 'Image';
+    if (t.startsWith('video/')) return 'Video';
+    if (t.startsWith('audio/')) return 'Audio';
+    const n = file.name.toLowerCase();
+    if (/\.(mp4|mov|webm|mkv|avi|m4v)$/.test(n)) return 'Video';
+    if (/\.(mp3|wav|m4a|aac|ogg|flac)$/.test(n)) return 'Audio';
+    return 'Image';
+  };
+  // 上传一个文件 → 按类型自动建一条参考行。批量上传时 antd beforeUpload 每个文件回调一次,
+  // 于是「一次选 3 视频 + 5 音频」→ 8 次调用 → 8 条行,类型自动分好。
+  const addUploadedRefFile = async (file: File) => {
+    if (!apiKey) {
+      message.warning(intl.formatMessage({ id: 'playground.index.fillKeyFirst' }));
+      return;
+    }
+    const id = newVideoRefId();
+    const category = inferRefCategory(file);
+    setRefEntries((p) => [...p, { id, category, usage: 'Reference', source: 'url', uploading: true }]);
+    try {
+      const { url } = await playgroundUpload(file, apiKey, { module: 'video_ref' });
+      patchRefEntry(id, { url, uploading: false });
+    } catch (e: any) {
+      patchRefEntry(id, { uploading: false });
+      message.error(e?.message || 'upload failed');
+    }
   };
 
-  const removeReferenceImage = (uid: string) => {
-    setReferenceImages((prev) => prev.filter((x) => x.uid !== uid));
-  };
-
-  // 同一时刻最多 1 张首帧 / 1 张尾帧;切换 role 时把冲突的图退回 reference。
-  const setReferenceRole = (uid: string, next: VideoImageRole) => {
-    setReferenceImages((prev) => {
-      const out = prev.map((x) => ({ ...x }));
-      const target = out.find((x) => x.uid === uid);
-      if (!target) return prev;
-      if (next === 'first_frame' || next === 'last_frame') {
-        for (const x of out) {
-          if (x.uid !== uid && x.role === next) x.role = 'reference';
-        }
-      }
-      target.role = next;
-      return out;
-    });
-  };
-
-  const uploadProps: UploadProps = {
-    accept: 'image/*',
-    multiple: true,
-    showUploadList: false,
-    beforeUpload: (file) => {
-      if (file.type && !file.type.startsWith('image/')) {
-        message.warning(intl.formatMessage({ id: 'playground.video.warnUploadImageOnly' }));
-        return Upload.LIST_IGNORE;
-      }
-      return true;
-    },
-    customRequest: async ({ file, onSuccess, onError }) => {
-      setUploadingRef(true);
-      try {
-        const f = file as File;
-        const { url, id: assetID } = await playgroundUpload(f, apiKey, {
-          module: 'i2v_input',
-          purpose: 'i2v_reference',
-        });
-        if (requiresPublicReferenceURL && !isPublicHTTPImageURL(url)) {
-          message.warning(intl.formatMessage({ id: 'playground.video.warnUploadNeedPublic' }));
-          onSuccess?.({} as any);
-          return;
-        }
-
-        setReferenceImages((prev) => {
-          if (prev.some((x) => x.url === url)) return prev;
-          const item: ReferenceImage = {
-            uid: `asset-${assetID}-${Date.now()}`,
-            assetId: assetID,
-            url,
-            name: f.name || intl.formatMessage({ id: 'playground.video.refImageName' }),
-            source: 'upload',
-            role: defaultRoleForNew(prev),
-          };
-          return [...prev, item];
-        });
-        message.success(intl.formatMessage({ id: 'playground.video.refImageAdded' }));
-        onSuccess?.({} as any);
-      } catch (e: any) {
-        message.error(e?.message || intl.formatMessage({ id: 'playground.video.uploadFailed' }));
-        onError?.(e);
-      } finally {
-        setUploadingRef(false);
-      }
-    },
-  };
+  // 当前模型是否声明支持视频生视频(supports_reference_video)。用于:只有支持时才把视频参考写进
+  // typed reference_video —— 否则后端能力门槛会 400;不支持的模型视频参考只进 file_infos(路由到
+  // 腾讯云图 VS 时消费,路由到其它上游时后端诚实丢弃)。
+  const supportsRefVideo = !!models.find((m) => m.value === modelName)?.supportsReferenceVideo;
 
   const startTimer = (createdAtSec?: number) => {
     if (elapsedTimerRef.current) window.clearInterval(elapsedTimerRef.current);
@@ -484,54 +428,44 @@ export default function VideoPanel() {
 
     try {
       const body: any = { model: modelName, prompt: prompt.trim() };
-      // 合并:referenceImages 已经带 role,再加上手动输入框里那条孤立 URL(默认走 auto)。
-      type Bucket = { url: string; assetId: number; role: VideoImageRole };
-      const buckets: Bucket[] = referenceImages.map((x) => ({
-        url: x.url,
-        assetId: x.assetId || 0,
-        role: x.role,
-      }));
-      const manual = imageURL.trim();
-      if (manual && !buckets.some((x) => x.url === manual)) {
-        buckets.push({ url: manual, assetId: 0, role: defaultRoleForNew(referenceImages) });
-      }
-      if (requiresPublicReferenceURL) {
-        const invalid = buckets.find((b) => !isPublicHTTPImageURL(b.url));
-        if (invalid) {
-          message.warning(intl.formatMessage({ id: 'playground.video.warnPublicRefUrl' }));
-          return;
-        }
-      }
-      const first = buckets.find((b) => b.role === 'first_frame');
-      const last = buckets.find((b) => b.role === 'last_frame');
-      const references = buckets.filter((b) => b.role === 'reference');
-      if (first) {
-        body.first_frame_image = first.url;
-        if (first.assetId > 0 && !requiresPublicReferenceURL) body.first_frame_asset_id = first.assetId;
-      }
-      if (last) {
-        body.last_frame_image = last.url;
-        if (last.assetId > 0 && !requiresPublicReferenceURL) body.last_frame_asset_id = last.assetId;
-      }
-      if (references.length > 0) {
-        body.images = references.map((b) => b.url);
-        if (!requiresPublicReferenceURL && references.some((b) => b.assetId > 0)) {
-          body.image_asset_ids = references.map((b) => b.assetId);
-        }
-      }
+      // 统一参考列表 → 同时产出两份:
+      //   1) typed 字段(first_frame_image / last_frame_image / images[] / reference_video):所有上游通用,
+      //      后端各 provider 都消费;但只收「公网 URL(非 asset://)」的条目 —— asset:// 只有腾讯云图认,
+      //      放进 typed 会喂坏火山/Vidu/Kling。视频参考只在模型声明 supports_reference_video 时才进 typed,
+      //      否则会被后端能力门槛 400。
+      //   2) 顶层 file_infos(全量,含 asset:// 真人素材、音频、多视频):喂腾讯云图 VS override + 后端翻译层。
+      //      后端把 file_infos 按目标上游翻译成它认得的字段(见 video_reference_distribute.go)。
+      const entryURL = (e: VideoRefEntry) =>
+        e.source === 'material' ? (e.assetId ? `asset://${e.assetId}` : '') : (e.url || '').trim();
+
+      // ---- typed:只用公网 URL 条目 ----
+      const publicEntries = refEntries
+        .map((e) => ({ e, u: entryURL(e) }))
+        .filter(({ u }) => u && !u.toLowerCase().startsWith('asset://'));
+      const firstImg = publicEntries.find(({ e }) => e.category === 'Image' && e.usage === 'FirstFrame');
+      const lastImg = publicEntries.find(({ e }) => e.category === 'Image' && e.usage === 'LastFrame');
+      const refImgs = publicEntries.filter(({ e }) => e.category === 'Image' && e.usage === 'Reference');
+      const firstVid = publicEntries.find(({ e }) => e.category === 'Video');
+      if (firstImg) body.first_frame_image = firstImg.u;
+      if (lastImg) body.last_frame_image = lastImg.u;
+      if (refImgs.length > 0) body.images = refImgs.map(({ u }) => u);
+      // 视频:仅当模型声明支持时才进 typed(否则只靠下方 file_infos → 腾讯云图 VS 消费 / 其它上游后端丢弃)。
+      if (firstVid && supportsRefVideo) body.reference_video = firstVid.u;
+
+      // ---- file_infos:全量(含 asset:// / 音频 / 多视频)----
+      const fileInfos = refEntries
+        .map((e) => {
+          const url = entryURL(e);
+          return url ? { Type: 'Url', Category: e.category, Url: url, Usage: e.usage } : null;
+        })
+        .filter(Boolean);
+      if (fileInfos.length > 0) body.file_infos = fileInfos;
+
       if (duration) body.duration = duration;
       if (resolution) body.resolution = resolution;
       if (aspectRatio) body.aspect_ratio = aspectRatio;
       if (audio === 'on') body.audio = true;
       else if (audio === 'off') body.audio = false;
-      // AIGC 真人/非真人素材引用:走 extra.file_infos,Url=asset://<AssetId>,Category=素材类型。
-      if (materialAssetId) {
-        body.extra = {
-          file_infos: [
-            { Type: 'Url', Category: materialCategory, Url: `asset://${materialAssetId}`, Usage: 'Reference' },
-          ],
-        };
-      }
 
       const res = await fetch(apiURL('/v1/videos/generations'), {
         method: 'POST',
@@ -663,6 +597,8 @@ export default function VideoPanel() {
                     { value: '480p', label: '480p' },
                     { value: '720p', label: '720p' },
                     { value: '1080p', label: '1080p' },
+                    { value: '2k', label: '2K' },
+                    { value: '4k', label: '4K' },
                   ]}
                   disabled={!!isInFlight || submitting}
                 />
@@ -702,86 +638,11 @@ export default function VideoPanel() {
                 />
               </div>
             </div>
-            <div>
-              <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.refImageLabel' })}</div>
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  placeholder={requiresPublicReferenceURL ? intl.formatMessage({ id: 'playground.video.refUrlPlaceholderPublic' }) : intl.formatMessage({ id: 'playground.video.refUrlPlaceholder' })}
-                  value={imageURL}
-                  onChange={(e) => setImageURL(e.target.value)}
-                  allowClear
-                  disabled={!!isInFlight || submitting}
-                  onPressEnter={addReferenceURL}
-                />
-                <Button
-                  icon={<PlusOutlined />}
-                  onClick={addReferenceURL}
-                  disabled={!!isInFlight || submitting || !imageURL.trim()}
-                >
-                  {intl.formatMessage({ id: 'playground.video.addBtn' })}
-                </Button>
-              </Space.Compact>
-              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Upload {...uploadProps} disabled={!!isInFlight || submitting}>
-                  <Button
-                    icon={<UploadOutlined />}
-                    loading={uploadingRef}
-                    disabled={!!isInFlight || submitting}
-                  >
-                    {intl.formatMessage({ id: 'playground.video.uploadRefBtn' })}
-                  </Button>
-                </Upload>
-                {referenceImages.length > 0 && (
-                  <Tag color="blue" style={{ margin: 0 }}>
-                    {intl.formatMessage({ id: 'playground.video.imageCount' }, { count: referenceImages.length })}
-                  </Tag>
-                )}
-              </div>
-              {referenceImages.length > 0 && (
-                <div style={referenceGridStyle}>
-                  {referenceImages.map((item) => {
-                    const badge = VIDEO_ROLE_BADGE[item.role];
-                    return (
-                      <div key={item.uid} style={referenceTileStyle}>
-                        <Image
-                          src={item.url}
-                          alt={item.name}
-                          width={96}
-                          height={96}
-                          style={{ objectFit: 'cover', display: 'block' }}
-                          preview={{ src: item.url }}
-                        />
-                        <Button
-                          size="small"
-                          type="text"
-                          danger
-                          icon={<DeleteOutlined />}
-                          onClick={() => removeReferenceImage(item.uid)}
-                          disabled={!!isInFlight || submitting}
-                          style={referenceDeleteStyle}
-                        />
-                        {badge && (
-                          <span style={{ ...referenceBadgeStyle, background: badge.bg }}>
-                            {badge.text}
-                          </span>
-                        )}
-                        <Select
-                          size="small"
-                          value={item.role}
-                          onChange={(v) => setReferenceRole(item.uid, v as VideoImageRole)}
-                          options={VIDEO_ROLE_OPTIONS}
-                          disabled={!!isInFlight || submitting}
-                          style={referenceRoleSelectStyle}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {/* 统一参考列表:视频生成唯一的参考入口。图/视频/音频任意多条 × 上传/URL/真人素材 × Usage(首帧/尾帧/参考)。
+                提交时同时产出 typed 字段(通用)与 file_infos(完整),后端按目标上游翻译分派。 */}
             <div>
               <div style={labelStyle}>
-                {intl.formatMessage({ id: 'playground.video.materialLabel' })}
+                {intl.formatMessage({ id: 'playground.video.refCombineLabel' })}
                 <Button
                   type="link"
                   size="small"
@@ -792,25 +653,100 @@ export default function VideoPanel() {
                   {intl.formatMessage({ id: 'playground.video.materialRefresh' })}
                 </Button>
               </div>
-              <Select
-                allowClear
-                style={{ width: '100%' }}
-                placeholder={intl.formatMessage({
-                  id: materials.length ? 'playground.video.materialPlaceholder' : 'playground.video.materialEmpty',
-                })}
-                notFoundContent={intl.formatMessage({ id: 'playground.video.materialEmpty' })}
-                value={materialAssetId}
-                disabled={!!isInFlight || submitting}
-                onChange={(v) => {
-                  setMaterialAssetId(v);
-                  const m = materials.find((x) => x.upstream_asset_id === v);
-                  if (m) setMaterialCategory(m.asset_type || 'Image');
-                }}
-                options={materials.map((m) => ({
-                  value: m.upstream_asset_id,
-                  label: `${m.is_real_person ? '👤 ' : ''}${m.display_name || m.upstream_asset_id} · ${m.asset_type}`,
-                }))}
-              />
+              <div style={{ fontSize: 12, color: '#999', marginBottom: 6 }}>
+                {intl.formatMessage({ id: 'playground.video.refCombineHint' })}
+              </div>
+              <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                {refEntries.map((e) => (
+                  <Space.Compact key={e.id} style={{ width: '100%' }}>
+                    <Select
+                      value={e.category}
+                      style={{ width: 92 }}
+                      disabled={!!isInFlight || submitting}
+                      onChange={(v) => patchRefEntry(e.id, { category: v })}
+                      options={[
+                        { value: 'Image', label: 'Image' },
+                        { value: 'Video', label: 'Video' },
+                        { value: 'Audio', label: 'Audio' },
+                      ]}
+                    />
+                    <Select
+                      value={e.source}
+                      style={{ width: 104 }}
+                      disabled={!!isInFlight || submitting}
+                      onChange={(v) => patchRefEntry(e.id, { source: v })}
+                      options={[
+                        { value: 'material', label: intl.formatMessage({ id: 'playground.video.refSourceMaterial' }) },
+                        { value: 'url', label: intl.formatMessage({ id: 'playground.video.refSourceUrl' }) },
+                      ]}
+                    />
+                    {e.source === 'material' ? (
+                      <Select
+                        style={{ flex: 1 }}
+                        allowClear
+                        disabled={!!isInFlight || submitting}
+                        placeholder={intl.formatMessage({ id: 'playground.video.refPickMaterial' })}
+                        value={e.assetId}
+                        onChange={(v) => patchRefEntry(e.id, { assetId: v })}
+                        options={materials
+                          .filter((m) => m.asset_type === e.category)
+                          .map((m) => ({
+                            value: m.upstream_asset_id,
+                            label: `${m.is_real_person ? '👤 ' : ''}${m.display_name || m.upstream_asset_id}`,
+                          }))}
+                      />
+                    ) : (
+                      <>
+                        <Input
+                          style={{ flex: 1 }}
+                          disabled={!!isInFlight || submitting}
+                          placeholder={intl.formatMessage({ id: 'playground.video.refUrlPh' })}
+                          value={e.url}
+                          onChange={(ev) => patchRefEntry(e.id, { url: ev.target.value })}
+                        />
+                        <Upload
+                          showUploadList={false}
+                          beforeUpload={(f) => {
+                            uploadRefEntryFile(e.id, f);
+                            return false;
+                          }}
+                        >
+                          <Button icon={<UploadOutlined />} loading={e.uploading} disabled={!!isInFlight || submitting} />
+                        </Upload>
+                      </>
+                    )}
+                    <Select
+                      value={e.usage}
+                      style={{ width: 108 }}
+                      disabled={!!isInFlight || submitting}
+                      onChange={(v) => patchRefEntry(e.id, { usage: v })}
+                      options={[
+                        { value: 'Reference', label: intl.formatMessage({ id: 'playground.video.refUsageReference' }) },
+                        { value: 'FirstFrame', label: intl.formatMessage({ id: 'playground.video.refUsageFirstFrame' }) },
+                        { value: 'LastFrame', label: intl.formatMessage({ id: 'playground.video.refUsageLastFrame' }) },
+                      ]}
+                    />
+                    <Button icon={<DeleteOutlined />} onClick={() => removeRefEntry(e.id)} disabled={!!isInFlight || submitting} />
+                  </Space.Compact>
+                ))}
+                <Space wrap>
+                  <Button type="dashed" icon={<PlusOutlined />} onClick={addRefEntry} disabled={!!isInFlight || submitting}>
+                    {intl.formatMessage({ id: 'playground.video.refAddBtn' })}
+                  </Button>
+                  <Upload
+                    multiple
+                    showUploadList={false}
+                    beforeUpload={(file) => {
+                      addUploadedRefFile(file as File);
+                      return false;
+                    }}
+                  >
+                    <Button icon={<UploadOutlined />} disabled={!!isInFlight || submitting}>
+                      {intl.formatMessage({ id: 'playground.video.refBatchUpload' })}
+                    </Button>
+                  </Upload>
+                </Space>
+              </Space>
             </div>
             <div>
               <div style={labelStyle}>{intl.formatMessage({ id: 'playground.video.promptLabel' })}</div>
@@ -1107,49 +1043,3 @@ const placeholderWrap: React.CSSProperties = {
   padding: '24px 16px',
 };
 
-const referenceGridStyle: React.CSSProperties = {
-  marginTop: 10,
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, 96px)',
-  gap: 10,
-};
-
-const referenceTileStyle: React.CSSProperties = {
-  position: 'relative',
-  width: 96,
-  // 图 96 + select 28(含间距)
-  height: 124,
-  borderRadius: 8,
-  overflow: 'hidden',
-  border: '1px solid rgba(0,0,0,0.08)',
-  background: '#fafafa',
-};
-
-const referenceDeleteStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 2,
-  right: 2,
-  width: 24,
-  height: 24,
-  padding: 0,
-  background: 'rgba(255,255,255,0.88)',
-};
-
-const referenceBadgeStyle: React.CSSProperties = {
-  position: 'absolute',
-  left: 4,
-  top: 76,
-  padding: '1px 5px',
-  borderRadius: 4,
-  color: '#fff',
-  fontSize: 11,
-  lineHeight: '16px',
-};
-
-const referenceRoleSelectStyle: React.CSSProperties = {
-  position: 'absolute',
-  left: 4,
-  right: 4,
-  bottom: 4,
-  width: 'calc(100% - 8px)',
-};

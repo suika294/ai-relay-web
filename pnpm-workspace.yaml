@@ -1,0 +1,9 @@
+# pnpm 11 reads settings from here (not package.json's "pnpm" field).
+# Approve these deps to run install/build scripts so `pnpm install` doesn't
+# fail with ERR_PNPM_IGNORED_BUILDS. esbuild links its native binary;
+# core-js / core-js-pure / es5-ext only print postinstall notices.
+allowBuilds:
+  core-js: true
+  core-js-pure: true
+  es5-ext: true
+  esbuild: true

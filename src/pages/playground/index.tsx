@@ -40,6 +40,7 @@ import { apiURL } from '@/utils/request';
 import AdOneClickPanel from './AdOneClickPanel';
 import AigcMaterialPanel from './AigcMaterialPanel';
 import ApiKeyField from './ApiKeyField';
+import CanvasStudioPanel from './CanvasStudioPanel';
 import { usePlaygroundApiKey } from './apiKeyStore';
 import EffectsPanel from './EffectsPanel';
 import GeneralOneClickPanel from './GeneralOneClickPanel';
@@ -52,6 +53,7 @@ import VirtualmanPanel from './VirtualmanPanel';
 import VirtualTryOnPanel from './VirtualTryOnPanel';
 import VoiceClonePanel from './VoiceClonePanel';
 import VoicePanel from './VoicePanel';
+import DigitalHumanLivePanel from './DigitalHumanLivePanel';
 import './playground.css';
 
 const { TextArea } = Input;
@@ -896,7 +898,8 @@ export default function Playground() {
 
   // 测试期临时全部放开。需要重新隐藏时,把对应 key 填回此集合即可:
   //   ad-one-click / template / virtual-tryon / effects / general-one-click / multiframe
-  const HIDDEN_TABS = new Set<string>();
+  // canvas(无限画布)暂时隐藏,面板代码保留,填回 key 即可恢复。
+  const HIDDEN_TABS = new Set<string>(['canvas']);
   const tabItems = [
           {
             key: 'chat',
@@ -1025,6 +1028,24 @@ export default function Playground() {
               </span>
             ),
             children: <VirtualmanPanel />,
+          },
+          {
+            key: 'digital-human-live',
+            label: (
+              <span>
+                <VideoCameraOutlined /> {intl.formatMessage({ id: 'playground.index.tabDigitalHumanLive' })}
+              </span>
+            ),
+            children: <DigitalHumanLivePanel />,
+          },
+          {
+            key: 'canvas',
+            label: (
+              <span>
+                <AppstoreOutlined /> {intl.formatMessage({ id: 'playground.index.tabCanvas' })}
+              </span>
+            ),
+            children: <CanvasStudioPanel />,
           },
   ];
 

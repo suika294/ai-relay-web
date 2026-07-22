@@ -2,6 +2,7 @@ import {
   CloseCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  HistoryOutlined,
   LoadingOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -33,6 +34,7 @@ import { t } from '@/utils/i18n';
 import ApiKeyField from './ApiKeyField';
 import { usePlaygroundApiKey } from './apiKeyStore';
 import { playgroundUpload } from './upload';
+import MediaHistoryDrawer from './MediaHistoryDrawer';
 
 const LS_LAST_TASK = 'playground_multiframe_last_task_v1';
 
@@ -126,6 +128,7 @@ export default function MultiframePanel() {
   const [startImage, setStartImage] = useState<FrameImage>(null);
   const [keyframes, setKeyframes] = useState<Keyframe[]>([newKeyframe(), newKeyframe()]);
 
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [startUploading, setStartUploading] = useState(false);
   const [polling, setPolling] = useState(false);
@@ -298,6 +301,7 @@ export default function MultiframePanel() {
     try {
       const body: any = {
         model: modelName,
+        task_type: 'multiframe',
         first_frame_image: startImage.url,
         image_settings: keyframes.map((k) => ({
           prompt: k.prompt || undefined,
@@ -383,7 +387,19 @@ export default function MultiframePanel() {
               <VideoCameraAddOutlined /> {intl.formatMessage({ id: 'playground.multiframe.title' })}
             </span>
           }
-          extra={<span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>}
+          extra={
+            <Space size={10}>
+              <Button
+                size="small"
+                type="text"
+                icon={<HistoryOutlined />}
+                onClick={() => setHistoryOpen(true)}
+              >
+                {intl.formatMessage({ id: 'playground.video.history' })}
+              </Button>
+              <span style={{ color: '#888', fontSize: 12 }}>POST /v1/videos/generations</span>
+            </Space>
+          }
         >
           <Space direction="vertical" size="middle" style={{ width: '100%' }}>
             <div>
@@ -733,6 +749,14 @@ export default function MultiframePanel() {
           { min: MIN_KEYFRAMES, max: MAX_KEYFRAMES },
         )}
       </div>
+
+      <MediaHistoryDrawer
+        kind="video"
+        taskType="multiframe"
+        open={historyOpen}
+        apiKey={apiKey}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }

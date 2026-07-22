@@ -25,6 +25,10 @@ export default defineConfig({
   },
   npmClient: 'pnpm',
   hash: true,
+  // Wrap each minified async chunk in an IIFE so esbuild's per-chunk helper
+  // shims (e.g. `Eg`) don't collide across chunks — fixes the esbuildHelperChecker
+  // "Found conflicts in esbuild helpers" build failure.
+  esbuildMinifyIIFE: true,
   routes: [
     // ========= 公开页（不走 ProLayout） =========
     { path: '/', component: './home', layout: false },
@@ -51,6 +55,7 @@ export default defineConfig({
         { path: '/docs/templates', component: './docs/templates' },
         { path: '/docs/3d', component: './docs/3d' },
         { path: '/docs/digital-human', component: './docs/digital-human' },
+        { path: '/docs/digital-human-live', component: './docs/digital-human-live' },
         { path: '/docs/audio', component: './docs/audio' },
         { path: '/docs/embeddings', component: './docs/embeddings' },
         { path: '/docs/vectordb', component: './docs/vectordb' },
@@ -158,6 +163,9 @@ export default defineConfig({
     '/v1': {
       target: devProxyTarget,
       changeOrigin: true,
+      // ws: true 让 WebSocket 升级(/v1/audio/speech/ws 流式 TTS、/v1/live/ws)也走代理到后端;
+      // 缺了它 WS 握手会停在 dev server(:8000)不转发,前端表现为「连上但无任何帧」。
+      ws: true,
     },
   },
 });
