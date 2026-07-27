@@ -590,13 +590,13 @@ async function blobToBase64(blob: Blob): Promise<string> {
 // 后端 /v1/audio/speech 单段行为完全不变(纯新增调用,不动原有入口)。
 
 // SEG_GAP_MS 段间静音,让不同情绪的段落衔接自然一点。
-const SEG_GAP_MS = 150;
+export const SEG_GAP_MS = 150;
 
 // 划词标注模型:在一整段文本上,给「选中的字符区间」打情绪标签(参考 MiniMax 官网的交互)。
 // EmotionRange 一段带情绪的字符区间 [start, end)(半开);互不重叠,由 addEmotionRange 维护。
-type EmotionRange = { id: string; start: number; end: number; emotion: string };
+export type EmotionRange = { id: string; start: number; end: number; emotion: string };
 // EmotionChunk 提交/预览用的有序切块:把整段文本按区间切成「带情绪」+「未标注」的连续块。
-type EmotionChunk = { text: string; emotion: string };
+export type EmotionChunk = { text: string; emotion: string };
 
 // EMOTION_COLOR 情绪 → 展示色(情绪按钮 + 划词高亮共用)。未列出的情绪回退到中性灰。
 const EMOTION_COLOR: Record<string, string> = {
@@ -679,7 +679,7 @@ function recommendedChineseVoice(vp: VoiceProvider): string | null {
 
 // addEmotionRange 把 [start,end) 打上 emotion,并保持所有区间互不重叠:
 // 与新区间相交的旧区间被裁掉相交部分(保留左右残段),中间由新区间覆盖。emotion='' = 清除该选区标注。
-function addEmotionRange(ranges: EmotionRange[], start: number, end: number, emotion: string, idSeed: number): EmotionRange[] {
+export function addEmotionRange(ranges: EmotionRange[], start: number, end: number, emotion: string, idSeed: number): EmotionRange[] {
   if (start >= end) return ranges;
   const out: EmotionRange[] = [];
   for (const r of ranges) {
@@ -698,7 +698,7 @@ function addEmotionRange(ranges: EmotionRange[], start: number, end: number, emo
 // buildEmotionChunks 把整段文本按区间切成有序连续块(带情绪块 + 未标注块),预览与提交共用。
 // 区间假定已互不重叠、升序(由 addEmotionRange 保证);越界的区间在此裁剪/丢弃。
 // 相邻同情绪块会被合并 —— 减少无谓切段,保住韵律连续(两段都标"开心"应当连读,而非各发一次)。
-function buildEmotionChunks(text: string, ranges: EmotionRange[]): EmotionChunk[] {
+export function buildEmotionChunks(text: string, ranges: EmotionRange[]): EmotionChunk[] {
   const sorted = ranges
     .filter((r) => r.start < r.end && r.start < text.length)
     .map((r) => ({ ...r, end: Math.min(r.end, text.length) }))
@@ -725,7 +725,7 @@ function buildEmotionChunks(text: string, ranges: EmotionRange[]): EmotionChunk[
 const PUNCT_ONLY_RE = /^[\s\p{P}\p{S}]+$/u;
 
 // chunksForSynthesis 把预览块转成"真正要合成"的块:折叠纯标点碎块进上一块(或下一块),再去空 + 去首尾空白。
-function chunksForSynthesis(chunks: EmotionChunk[]): EmotionChunk[] {
+export function chunksForSynthesis(chunks: EmotionChunk[]): EmotionChunk[] {
   const folded: EmotionChunk[] = [];
   for (const c of chunks) {
     if (PUNCT_ONLY_RE.test(c.text) && folded.length > 0) {
@@ -739,7 +739,7 @@ function chunksForSynthesis(chunks: EmotionChunk[]): EmotionChunk[] {
 
 // decodeToBuffer 用一次性 AudioContext 把任意容器(mp3/wav/aac…)解码成 PCM AudioBuffer。
 // decodeAudioData 会把音频重采样到 ctx.sampleRate,所以各段解码后采样率一致,可直接拼接。
-async function decodeToBuffer(ctx: AudioContext, blob: Blob): Promise<AudioBuffer> {
+export async function decodeToBuffer(ctx: AudioContext, blob: Blob): Promise<AudioBuffer> {
   const ab = await blob.arrayBuffer();
   // 老浏览器只认 callback 形态,新浏览器返回 Promise,两种都兜。
   return await new Promise<AudioBuffer>((resolve, reject) => {
@@ -749,7 +749,7 @@ async function decodeToBuffer(ctx: AudioContext, blob: Blob): Promise<AudioBuffe
 }
 
 // mergeAudioBuffers 顺序拼接多段 buffer,段间插 gapMs 静音。声道数取最大,缺声道复用 ch0(单→立体声兜底)。
-function mergeAudioBuffers(ctx: AudioContext, buffers: AudioBuffer[], gapMs: number): AudioBuffer {
+export function mergeAudioBuffers(ctx: AudioContext, buffers: AudioBuffer[], gapMs: number): AudioBuffer {
   const rate = ctx.sampleRate;
   const numCh = Math.max(1, ...buffers.map((b) => b.numberOfChannels));
   const gapFrames = Math.max(0, Math.round((gapMs / 1000) * rate));
@@ -767,7 +767,7 @@ function mergeAudioBuffers(ctx: AudioContext, buffers: AudioBuffer[], gapMs: num
 }
 
 // encodeWAV 把 AudioBuffer 编码成 16-bit PCM WAV Blob(浏览器原生可播 + 可下载)。
-function encodeWAV(buffer: AudioBuffer): Blob {
+export function encodeWAV(buffer: AudioBuffer): Blob {
   const numCh = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
   const numFrames = buffer.length;

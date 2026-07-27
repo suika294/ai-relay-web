@@ -897,9 +897,8 @@ export default function Playground() {
   };
 
   // 测试期临时全部放开。需要重新隐藏时,把对应 key 填回此集合即可:
-  //   ad-one-click / template / virtual-tryon / effects / general-one-click / multiframe
-  // canvas(无限画布)暂时隐藏,面板代码保留,填回 key 即可恢复。
-  const HIDDEN_TABS = new Set<string>(['canvas']);
+  //   ad-one-click / template / virtual-tryon / effects / general-one-click / multiframe / canvas
+  const HIDDEN_TABS = new Set<string>();
   const tabItems = [
           {
             key: 'chat',

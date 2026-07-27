@@ -75,8 +75,8 @@ interface ChatLine {
   ts: number;
 }
 
-// 人设模板预设（文档「推荐的人设模板」精简示例）。
-const PERSONA_PRESETS: { label: string; value: string }[] = [
+// 人设模板预设（文档「推荐的人设模板」精简示例）。导出供画布「直播台节点」复用同一份预设。
+export const PERSONA_PRESETS: { label: string; value: string }[] = [
   {
     label: '甜甜客服 Tina',
     value:
@@ -97,7 +97,17 @@ const PERSONA_PRESETS: { label: string; value: string }[] = [
 let dhSeq = 0;
 const nextSeq = () => (dhSeq += 1);
 
-export default function DigitalHumanLivePanel() {
+// seed:可选初值,供画布「直播台节点」把已拼好的 头像/人设/音色 预填进来(不传则维持原有默认行为)。
+export type DhLiveSeed = {
+  persona?: string;
+  imageUri?: string;
+  voice?: string;
+  avatarName?: string;
+  callMode?: 'video' | 'audio';
+  channelName?: string;
+};
+
+export default function DigitalHumanLivePanel({ seed }: { seed?: DhLiveSeed } = {}) {
   const intl = useIntl();
   const { apiKey } = usePlaygroundApiKey();
   // 组件内本地文案助手：默认中文，缺 gen key 时也不至于显示裸 id；英文由 gen key 覆盖。
@@ -105,12 +115,12 @@ export default function DigitalHumanLivePanel() {
     intl.formatMessage({ id: `playground.dhLive.${id}`, defaultMessage: dm }, values);
 
   // ---- 表单 ----
-  const [callMode, setCallMode] = useState<'video' | 'audio'>('video');
-  const [persona, setPersona] = useState(PERSONA_PRESETS[0].value);
-  const [imageUri, setImageUri] = useState('');
-  const [avatarName, setAvatarName] = useState('');
-  const [voice, setVoice] = useState('');
-  const [channelName, setChannelName] = useState('');
+  const [callMode, setCallMode] = useState<'video' | 'audio'>(seed?.callMode || 'video');
+  const [persona, setPersona] = useState(seed?.persona || PERSONA_PRESETS[0].value);
+  const [imageUri, setImageUri] = useState(seed?.imageUri || '');
+  const [avatarName, setAvatarName] = useState(seed?.avatarName || '');
+  const [voice, setVoice] = useState(seed?.voice || '');
+  const [channelName, setChannelName] = useState(seed?.channelName || '');
   const [voices, setVoices] = useState<VoiceItem[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
