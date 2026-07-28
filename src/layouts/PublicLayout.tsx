@@ -42,7 +42,7 @@ function PublicLayoutInner({
     { to: '/models', label: t('layout.nav.models') },
     { to: '/billing', label: t('layout.nav.recharge') },
     { to: '/docs', label: t('layout.nav.docs') },
-    { to: '/playground', label: t('layout.nav.playground') },
+    { to: '/canvas', label: t('layout.nav.canvas') },
   ];
 
   const mobileNavMenu: MenuProps['items'] = navItems.map((n) => ({

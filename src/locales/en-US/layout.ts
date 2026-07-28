@@ -6,6 +6,7 @@ export default {
   'layout.nav.recharge': 'Recharge',
   'layout.nav.docs': 'Docs',
   'layout.nav.playground': 'Playground',
+  'layout.nav.canvas': 'Infinite Canvas',
   'layout.nav.menu': 'Navigation',
   // public user dropdown
   'layout.user.console': 'Go to Console',

@@ -1,0 +1,26 @@
+.canvas-page {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin-top: 16px;
+}
+
+.canvas-page > .cs-root:not(:fullscreen) {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: calc(100dvh - 72px);
+  border-radius: 0;
+}
+
+@media (max-width: 768px) {
+  .canvas-page {
+    margin-top: 10px;
+  }
+
+  .canvas-page > .cs-root:not(:fullscreen) {
+    min-height: calc(100dvh - 66px);
+  }
+}

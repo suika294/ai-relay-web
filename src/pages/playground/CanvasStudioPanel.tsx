@@ -9,11 +9,13 @@ import {
   ControlOutlined,
   CopyOutlined,
   CustomerServiceOutlined,
+  DownloadOutlined,
   EditOutlined,
   ExpandOutlined,
   ExperimentOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
+  FolderAddOutlined,
   PictureOutlined,
   PlusOutlined,
   ShoppingOutlined,
@@ -75,6 +77,23 @@ type ModelInfo = { value: string; label: string; providerType?: string };
 type VoiceProvider = 'tencent' | 'openai' | 'minimax' | 'dashscope' | 'kling';
 type ModelsByType = Record<string, ModelInfo[]>; // 按 systemApi.models 的 type 分组
 type RunInfo = { status: 'running' | 'failed'; error?: string; startedAt?: number };
+type CanvasMaterial = {
+  nodeId: string;
+  name: string;
+  url: string;
+  referenceUrl?: string;
+  category: 'Image' | 'Video' | 'Audio' | 'Model';
+  sourceType?: 'image' | 'video' | 'audio' | 'material';
+};
+type StoredCanvasMaterial = {
+  id: string;
+  kind: 'canvas' | 'aigc';
+  name: string;
+  content_type?: string;
+  url: string;
+  asset_id: number;
+  upstream_asset_id?: string;
+};
 
 // 后端 ai_models.provider_type → TTS 音色/语气 provider(对齐 VoicePanel modelProviderTypeToVoiceProvider)
 function voiceProviderOf(providerType?: string): VoiceProvider {
@@ -95,7 +114,8 @@ function voiceProviderOf(providerType?: string): VoiceProvider {
 // 视频 / 音频参数选项(通用常用值;后端会按模型再校验)
 const VIDEO_PARAMS = [
   { icon: <ClockCircleOutlined />, label: '时长', field: 'duration', opts: [
-    { value: '3', label: '3s' }, { value: '5', label: '5s' }, { value: '8', label: '8s' }, { value: '10', label: '10s' },
+    { value: '3', label: '3s' }, { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
+    { value: '8', label: '8s' }, { value: '10', label: '10s' }, { value: '12', label: '12s' }, { value: '15', label: '15s' },
   ], def: '5' },
   { icon: <ExpandOutlined />, label: '清晰度', field: 'resolution', opts: [
     { value: '480p', label: '480p' }, { value: '720p', label: '720p' }, { value: '1080p', label: '1080p' },
@@ -202,6 +222,14 @@ const TEMPLATE_BGM: ModelOpt[] = [EMO('off', '无'), EMO('on', '有')];
 // 换装(腾讯 aiart change-clothes):images=[人物, 衣服…] 位置化,clothes_type 指明部位。
 const CLOTHES_TYPE: ModelOpt[] = [EMO('Upper-body', '上装'), EMO('Lower-body', '下装'), EMO('Dress', '连衣裙'), EMO('Upper-Lower', '上+下')];
 const clothesType = (data: any): string => String(data.clothes_type || 'Upper-body');
+const tryOnRoles = (data: any): string[] => {
+  switch (clothesType(data)) {
+    case 'Lower-body': return ['模特图', '下装图'];
+    case 'Dress': return ['模特图', '连衣裙图'];
+    case 'Upper-Lower': return ['模特图', '上衣图', '下装图'];
+    default: return ['模特图', '上衣图'];
+  }
+};
 
 // 一键成片(Vidu 固定虚拟模型):上传 1–7 张图 → 整片视频。
 const AD_ASPECT: ModelOpt[] = [EMO('16:9', '16:9'), EMO('9:16', '9:16'), EMO('1:1', '1:1')];
@@ -210,7 +238,8 @@ const AD_DURATION: ModelOpt[] = ['8', '15', '30', '45', '60'].map((v) => EMO(v, 
 const GEN_ASPECT: ModelOpt[] = [EMO('16:9', '16:9'), EMO('9:16', '9:16'), EMO('1:1', '1:1'), EMO('4:3', '4:3'), EMO('3:4', '3:4')];
 const GEN_DURATION: ModelOpt[] = ['5', '10', '15', '30', '60', '120'].map((v) => EMO(v, `${v}s`));
 // 数智人(image + 驱动音频 → 说话视频):覆盖 OmniHuman / Wan(emo/liveportrait) / 腾讯 lipsync-photo 等音频驱动型。
-const VM_RESOLUTION: ModelOpt[] = [EMO('720p', '720p'), EMO('1080p', '1080p')];
+const VM_RESOLUTION: ModelOpt[] = [EMO('720P', '720P'), EMO('1080P', '1080P')];
+const VM_WAN_RESOLUTION: ModelOpt[] = [EMO('480P', '480P'), EMO('720P', '720P')];
 
 // ============ 能力注册表 ============
 // 画布的每一种生成能力(图片/视频/音频/…后续换装/特效/3D)都是一条声明式配置:
@@ -453,7 +482,7 @@ const CAPABILITIES: Capability[] = [
     onModelChange: (v) => ({ model: v }),
     request: ({ model, refs, data }) => ({
       transport: 'async', path: '/v1/images/generations/async', pollBase: '/v1/images/generations/',
-      body: { model, images: refs, clothes_type: clothesType(data) },
+      body: { model, images: refs.slice(0, tryOnRoles(data).length), clothes_type: clothesType(data) },
       extract: (t) => (t?.data || []).map((x: any) => x.url || '').filter(Boolean),
     }),
   },
@@ -507,10 +536,9 @@ const CAPABILITIES: Capability[] = [
   },
   {
     // 数智人:头像图 + 驱动音频 → 说话视频。音频来自上游音频/TTS 节点(input_audio_url)。
-    // 收窄到 body 已核实的音频驱动型:OmniHuman(output_resolution 数值)、腾讯 lipsync-photo(resolution 字符串)。
-    // (万相 emo-v1/liveportrait 需 aspect_ratio+style_level,参数不同,后续单独接。)
+    // 收窄到 body 已核实的音频驱动型:万相 S2V、OmniHuman、腾讯 lipsync-photo。
     id: 'virtualman', label: '数智人', icon: <UserOutlined />, output: 'video', modelType: 'video',
-    modelFilter: (m) => /omnihuman|lipsync-photo/i.test(m.value),
+    modelFilter: (m) => /wan2\.2-s2v|omnihuman|lipsync-photo/i.test(m.value),
     usesRefs: true, usesPrompt: false, usesAudio: true,
     refsHint: '本节点图/上游图=头像',
     audioHint: '上游需连一个音频/TTS 节点作驱动音频',
@@ -520,16 +548,23 @@ const CAPABILITIES: Capability[] = [
       if (!audio.length) return '需要驱动音频:上游连一个音频/TTS 节点';
       return null;
     },
-    params: () => [{ icon: <ExpandOutlined />, label: '清晰度', field: 'vmRes', opts: VM_RESOLUTION, def: '720p' }],
-    defaults: (models) => ({ model: models[0]?.value, vmRes: '720p' }),
-    onModelChange: (v) => ({ model: v }),
+    params: (data) => [{
+      icon: <ExpandOutlined />, label: '清晰度', field: 'vmRes',
+      opts: /wan2\.2-s2v/i.test(String(data.model || '')) ? VM_WAN_RESOLUTION : VM_RESOLUTION,
+      def: /wan2\.2-s2v/i.test(String(data.model || '')) ? '480P' : '720P',
+    }],
+    defaults: (models) => {
+      const model = models[0]?.value;
+      return { model, vmRes: /wan2\.2-s2v/i.test(String(model || '')) ? '480P' : '720P' };
+    },
+    onModelChange: (v) => ({ model: v, vmRes: /wan2\.2-s2v/i.test(v) ? '480P' : '720P' }),
     request: ({ model, refs, audio, data }) => {
       const res = String(data.vmRes || '720p');
       const body: Record<string, unknown> = {
         model, task_type: 'virtualman', first_frame_image: refs[0], input_audio_url: audio[0],
       };
-      if (/omnihuman/i.test(model)) body.output_resolution = res === '1080p' ? 1080 : 720;
-      else body.resolution = res; // Wan / 腾讯 lipsync-photo 走字符串清晰度
+      if (/omnihuman/i.test(model)) body.output_resolution = res.toUpperCase() === '1080P' ? 1080 : 720;
+      else body.resolution = res.toUpperCase(); // Wan / 腾讯 lipsync-photo 走字符串清晰度
       return { transport: 'async', path: '/v1/videos/generations', pollBase: '/v1/videos/generations/', body,
         extract: (t) => (t?.data?.[0]?.url ? [t.data[0].url] : []) };
     },
@@ -576,6 +611,8 @@ type Ctx = {
   deleteNode: (id: string) => void;
   uploadAsset: (file: File) => Promise<string | null>;
   openPreview: (images: string[], index?: number) => void;
+  downloadMedia: (url: string, category: CanvasMaterial['category']) => void;
+  convertToMaterial: (id: string) => void;
   runLLM: (id: string, model: string, mode: string) => void;
   runClone: (id: string, args: CloneArgs) => void;
   openLive: (id: string) => void;
@@ -643,7 +680,7 @@ function defaultParams(model?: string) {
 
 // ============ 图片节点(上传 / 生成落图) ============
 function ImageNode({ id, data }: NodeProps) {
-  const { updateNodeData, selectNode, deleteNode, uploadAsset, runState, openPreview } = useContext(CanvasCtx);
+  const { updateNodeData, selectNode, deleteNode, uploadAsset, runState, openPreview, downloadMedia } = useContext(CanvasCtx);
   const ref = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -655,6 +692,8 @@ function ImageNode({ id, data }: NodeProps) {
   const run = runState[id];
   const hasImg = images.length > 0;
   const hasContent = hasImg || !!videoUrl || !!audioUrl || !!model3dUrl;
+  const primaryUrl = videoUrl || audioUrl || model3dUrl || images[0];
+  const mediaCategory: CanvasMaterial['category'] = videoUrl ? 'Video' : audioUrl ? 'Audio' : model3dUrl ? 'Model' : 'Image';
   const scene3dKind = model3dUrl ? classifyThreeDFile(undefined, model3dUrl) : null;
   // 生成节点标记 + 它对应的提示词/能力 —— 用来在图上标注「这是什么、由哪句提示词生成」,
   // 也用来区分「生成结果节点」和「纯上传节点」(结果没出来时不该退化成上传空框)。
@@ -682,11 +721,12 @@ function ImageNode({ id, data }: NodeProps) {
   return (
     <div
       className={`sc-node sc-image ${hasContent ? 'sc-has' : 'sc-empty'}`}
+      data-canvas-media-node={hasContent ? id : undefined}
       onPointerDownCapture={() => selectNode(id)}
     >
       <Handle type="target" position={Position.Left} />
       {videoUrl ? (
-        <div className="media-card nodrag">
+        <div className="media-card">
           <video src={videoUrl} controls playsInline />
         </div>
       ) : audioUrl ? (
@@ -774,6 +814,19 @@ function ImageNode({ id, data }: NodeProps) {
         {hasImg && (
           <button className="mini-x mini-view nodrag" title="查看大图" onClick={() => openPreview(images, 0)}>
             <FullscreenOutlined />
+          </button>
+        )}
+        {primaryUrl && (
+          <button
+            className="mini-x mini-view nodrag"
+            title="下载文件"
+            aria-label="下载文件"
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadMedia(primaryUrl, mediaCategory);
+            }}
+          >
+            <DownloadOutlined />
           </button>
         )}
         <button className="mini-x nodrag" title="删除节点" onClick={() => deleteNode(id)}>
@@ -1232,12 +1285,14 @@ function PillSelect({
   value,
   options,
   onChange,
+  customSeconds = false,
 }: {
   icon: JSX.Element;
   typeLabel: string;
   value?: string;
   options: ModelOpt[];
   onChange: (v: string) => void;
+  customSeconds?: boolean;
 }) {
   const cur = options.find((o) => o.value === value);
   // 短标签(尺寸比例/语气/清晰度…)用网格分段;长标签(模型/音色)用竖排列表
@@ -1249,7 +1304,7 @@ function PillSelect({
         <span className="size-picker-label">
           <span className="size-picker-type">{typeLabel}</span>
           <span className="size-picker-dot" />
-          <span className="size-picker-value">{cur?.label ?? '默认'}</span>
+          <span className="size-picker-value">{cur?.label ?? (customSeconds && value ? `${value}s` : '默认')}</span>
         </span>
       </button>
       <div className="smart-popover">
@@ -1275,6 +1330,29 @@ function PillSelect({
               </button>
             ))}
           </div>
+        )}
+        {customSeconds && (
+          <label className="duration-custom">
+            <span>自定义</span>
+            <input
+              key={value}
+              type="number"
+              min={1}
+              max={60}
+              step={1}
+              defaultValue={value || '5'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              onBlur={(e) => {
+                const seconds = Math.max(1, Math.min(60, Math.round(Number(e.currentTarget.value) || 5)));
+                e.currentTarget.value = String(seconds);
+                onChange(String(seconds));
+              }}
+              aria-label="自定义视频时长（秒）"
+            />
+            <b>s</b>
+          </label>
         )}
       </div>
     </div>
@@ -1316,6 +1394,7 @@ function Composer({
   onPatch,
   onRun,
   onAddRef,
+  materials,
 }: {
   anchor: RFNode | null;
   modelsByType: ModelsByType;
@@ -1327,10 +1406,12 @@ function Composer({
   onPatch: (patch: Record<string, unknown>) => void;
   onRun: () => void;
   onAddRef: (file: File) => void;
+  materials: CanvasMaterial[];
 }) {
   const vp = useViewport();
   const refInput = useRef<HTMLInputElement>(null);
   const promptSelection = useRef({ start: 0, end: 0 });
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   if (!anchor) return <div className="composer" />;
 
   const d = anchor.data || {};
@@ -1345,6 +1426,8 @@ function Composer({
   const paramDefs = cap.params(d, models);
   const n: number = d.count || 1;
   const noThumbs = derivedRefs.length + manualRefs.length === 0;
+  const refRoles = cap.id === 'tryon' ? tryOnRoles(d) : [];
+  const populatedRefCount = derivedRefs.length + manualRefs.length;
   const emotionRanges = (d.emotionRanges || []) as EmotionRange[];
   const emotionChunks = cap.id === 'audio' && emotionRanges.length ? buildEmotionChunks(d.prompt || '', emotionRanges) : [];
 
@@ -1376,11 +1459,13 @@ function Composer({
               {derivedRefs.map((u, i) => (
                 <div className="input-thumb input-self" key={`d${i}`} title="来自节点自身 / 上游">
                   <img src={u} alt="" />
+                  {refRoles[i] && <span className="input-thumb-role">{refRoles[i]}</span>}
                 </div>
               ))}
               {manualRefs.map((u, i) => (
                 <div className="input-thumb" key={`m${i}`}>
                   <img src={u} alt="" />
+                  {refRoles[derivedRefs.length + i] && <span className="input-thumb-role">{refRoles[derivedRefs.length + i]}</span>}
                   <button
                     className="input-thumb-remove"
                     title="移除参考图"
@@ -1390,7 +1475,13 @@ function Composer({
                   </button>
                 </div>
               ))}
-              {noThumbs && (
+              {refRoles.slice(populatedRefCount).map((role) => (
+                <button className="input-role-slot" type="button" key={role} onClick={() => refInput.current?.click()}>
+                  <PlusOutlined />
+                  <span>{role}</span>
+                </button>
+              ))}
+              {noThumbs && refRoles.length === 0 && (
                 <span className="input-thumb-count">
                   {derivedVideo.length
                     ? '已使用参考视频，可继续添加图片参考'
@@ -1447,12 +1538,49 @@ function Composer({
           <textarea
             className="prompt-input"
             value={d.prompt || ''}
-            onChange={(e) => onPatch({ prompt: e.target.value, ...(cap.id === 'audio' ? { emotionRanges: [] } : {}) })}
+            onChange={(e) => {
+              const value = e.target.value;
+              promptSelection.current = { start: e.target.selectionStart, end: e.target.selectionEnd };
+              const before = value.slice(0, e.target.selectionStart);
+              const match = before.match(/@([^@\s]*)$/);
+              setMentionQuery(match ? match[1] : null);
+              onPatch({ prompt: value, ...(cap.id === 'audio' ? { emotionRanges: [] } : {}) });
+            }}
             onSelect={(e) => {
               promptSelection.current = { start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd };
             }}
             placeholder={cap.promptPlaceholder}
           />
+          {mentionQuery !== null && (
+            <div className="material-mention-menu">
+              {materials
+                .filter((m) => !mentionQuery || m.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+                .slice(0, 8)
+                .map((m) => (
+                  <button
+                    key={m.nodeId}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const value = String(d.prompt || '');
+                      const caret = promptSelection.current.end || value.length;
+                      const before = value.slice(0, caret).replace(/@[^@\s]*$/, `@${m.name} `);
+                      const existing = ((d.mentionMaterials || []) as CanvasMaterial[]).filter((x) => x.nodeId !== m.nodeId);
+                      const refs = m.category === 'Image' ? Array.from(new Set([...(d.refs || []), m.url])) : d.refs || [];
+                      onPatch({ prompt: before + value.slice(caret), mentionMaterials: [...existing, m], refs });
+                      setMentionQuery(null);
+                    }}
+                  >
+                    {m.sourceType === 'material' ? <AppstoreOutlined /> : m.category === 'Image' ? <PictureOutlined /> : m.category === 'Video' ? <VideoCameraOutlined /> : <CustomerServiceOutlined />}
+                    <span>{m.name}</span>
+                    <small>{m.sourceType === 'material' ? '素材' : m.category === 'Image' ? '图片' : m.category === 'Video' ? '视频' : m.category === 'Audio' ? '音频' : '3D'}</small>
+                  </button>
+                ))}
+              {!materials.some((m) => !mentionQuery || m.name.toLowerCase().includes(mentionQuery.toLowerCase())) && (
+                <div className="material-mention-empty">没有匹配的已连接输入</div>
+              )}
+            </div>
+          )}
           {cap.stylePresets && (
             <div className="smart-control composer-template">
               <button className="composer-template-btn" type="button" title="风格预设">
@@ -1503,6 +1631,7 @@ function Composer({
                 typeLabel={p.label}
                 value={(d as Record<string, string>)[p.field] ?? p.def}
                 options={p.opts}
+                customSeconds={cap.id === 'video' && p.field === 'duration'}
                 onChange={(v) => {
                   if (cap.id === 'audio' && p.field === 'emotion' && promptSelection.current.start < promptSelection.current.end) {
                     onPatch({
@@ -1537,6 +1666,7 @@ function Composer({
 
 type DocMeta = { id: number; title: string; icon: string };
 type MenuState = { x: number; y: number; source?: string | null };
+type MediaMenuState = { x: number; y: number; nodeId: string };
 
 function CanvasInner() {
   const { apiKey } = usePlaygroundApiKey();
@@ -1550,6 +1680,10 @@ function CanvasInner() {
   const [runState, setRunState] = useState<Record<string, RunInfo>>({});
   const [saveHint, setSaveHint] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [mediaMenu, setMediaMenu] = useState<MediaMenuState | null>(null);
+  const [materialLibraryOpen, setMaterialLibraryOpen] = useState(false);
+  const [storedMaterials, setStoredMaterials] = useState<StoredCanvasMaterial[]>([]);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
   const [preview, setPreview] = useState<{ images: string[]; index: number } | null>(null);
   const [liveSeed, setLiveSeed] = useState<DhLiveSeed | null>(null);
   const [liveVoices, setLiveVoices] = useState<LiveVoice[]>([]);
@@ -1760,12 +1894,15 @@ function CanvasInner() {
 
   // 新建节点(可选连线),新节点自动独占选中 → composer 立即浮现
   const spawnNode = useCallback(
-    (type: string, screenX: number, screenY: number, source: string | null) => {
+    (type: string, screenX: number, screenY: number, source: string | null, capabilityId?: string) => {
       const pos = rf.screenToFlowPosition({ x: screenX, y: screenY });
       const id = `${type}_${Date.now().toString(36)}`;
       const data =
         type === 'image'
-          ? { images: [], prompt: '', ...capDefault(capById('image'), modelsForCap(capById('image'), modelsByType)) }
+          ? (() => {
+              const cap = capById(capabilityId || 'image');
+              return { images: [], prompt: '', ...capDefault(cap, modelsForCap(cap, modelsByType)) };
+            })()
           : type === 'clone'
           ? { provider: 'minimax', name: '', demoText: '', language: 'zh', voiceIdInput: '', description: '', cloneStatus: '' }
           : type === 'live'
@@ -1782,11 +1919,11 @@ function CanvasInner() {
   );
 
   const addNodeCenter = useCallback(
-    (type: string) => {
+    (type: string, capabilityId?: string) => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
       const off = (nodesRef.current.length % 6) * 26;
-      spawnNode(type, rect.left + rect.width / 2 + off, rect.top + rect.height / 3 + off, null);
+      spawnNode(type, rect.left + rect.width / 2 + off, rect.top + rect.height / 3 + off, null, capabilityId);
     },
     [spawnNode],
   );
@@ -1824,6 +1961,16 @@ function CanvasInner() {
     const self = nodesRef.current.find((nd) => nd.id === nodeId);
     const own: string[] = self?.data?.images || [];
     const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
+    const cap = capById(self?.data?.kind);
+    if (cap.combineRefs) {
+      const connected: string[] = [];
+      for (const sourceId of upIds) {
+        const nd = nodesRef.current.find((candidate) => candidate.id === sourceId);
+        if (nd?.type === 'material' && nd.data?.srcUrl && nd.data?.assetType === 'Image') connected.push(String(nd.data.srcUrl));
+        if (nd?.type === 'image' && Array.isArray(nd.data?.images)) connected.push(...nd.data.images);
+      }
+      return Array.from(new Set([...own, ...connected]));
+    }
     const registered: string[] = [];
     const up: string[] = [];
     for (const nd of nodesRef.current) {
@@ -1832,10 +1979,7 @@ function CanvasInner() {
       }
       if (upIds.includes(nd.id) && nd.type === 'image' && Array.isArray(nd.data?.images)) up.push(...nd.data.images);
     }
-    const cap = capById(self?.data?.kind);
-    // 多输入能力(换装/多帧/模板/成片):自身 + 上游 合并;
     // 单主体能力(图片/视频/特效/3D/数智人):有自身图就只用自身,否则回退上游 —— 不把祖先图也当参考
-    if (cap.combineRefs) return Array.from(new Set([...own, ...registered, ...up]));
     return own.length ? Array.from(new Set(own)) : Array.from(new Set([...registered, ...up]));
   }, []);
 
@@ -1868,6 +2012,12 @@ function CanvasInner() {
       }
       if (nd.data?.audioUrl) infos.push({ Type: 'Url', Category: 'Audio', Url: String(nd.data.audioUrl), Usage: 'Reference' });
       if (nd.data?.videoUrl) infos.push({ Type: 'Url', Category: 'Video', Url: String(nd.data.videoUrl), Usage: 'Reference' });
+    }
+    const self = nodesRef.current.find((nd) => nd.id === nodeId);
+    for (const material of ((self?.data?.mentionMaterials || []) as CanvasMaterial[])) {
+      const refURL = material.referenceUrl || material.url;
+      if (material.category === 'Model' || infos.some((info) => info.Url === refURL || info.Url === material.url)) continue;
+      infos.push({ Type: 'Url', Category: material.category, Url: refURL, Usage: 'Reference' });
     }
     return infos;
   }, []);
@@ -2046,7 +2196,8 @@ function CanvasInner() {
       updateNodeData(id, { matStatus: manualUrl ? 'registering' : 'uploading' });
       try {
         // 传了文件就上传拿 URL,否则直接用手填的 URL
-        const fileUrl = manualUrl || (await playgroundUpload(args.file as File, apiKey, { module: 'aigc_material' }))?.url;
+        const uploaded = manualUrl ? null : await playgroundUpload(args.file as File, apiKey, { module: 'aigc_material' });
+        const fileUrl = manualUrl || uploaded?.url;
         if (!fileUrl) throw new Error('上传失败');
         updateNodeData(id, { srcUrl: fileUrl, matStatus: 'registering' });
         const r = await authFetch('/v1/aigc/materials', {
@@ -2054,7 +2205,7 @@ function CanvasInner() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             is_real_person: args.isRealPerson, group_id: args.groupId || '', asset_type: args.assetType,
-            file_url: fileUrl, asset_name: args.name.trim() || args.assetType,
+            file_url: fileUrl, sample_asset_id: uploaded?.id || 0, asset_name: args.name.trim() || args.assetType,
           }),
         });
         const j = await r.json();
@@ -2386,6 +2537,14 @@ function CanvasInner() {
       if (el.closest('input, textarea, .ant-select-dropdown, .composer, .cs-topbar')) return;
       e.preventDefault();
       e.stopPropagation();
+      const mediaNode = el.closest<HTMLElement>('[data-canvas-media-node]');
+      if (mediaNode?.dataset.canvasMediaNode) {
+        const rect = root.getBoundingClientRect();
+        setMenu(null);
+        setMediaMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top, nodeId: mediaNode.dataset.canvasMediaNode });
+        return;
+      }
+      setMediaMenu(null);
       if (el.closest('.react-flow__node, .react-flow__minimap, .react-flow__controls')) {
         setMenu(null);
         return;
@@ -2427,16 +2586,23 @@ function CanvasInner() {
   );
 
   useEffect(() => {
-    if (!menu) return undefined;
-    const onDown = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(null);
-    window.addEventListener('mousedown', onDown);
+    if (!menu && !mediaMenu) return undefined;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('.create-menu, .node-context-menu')) return;
+      setMenu(null);
+      setMediaMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMenu(null); setMediaMenu(null); }
+    };
+    document.addEventListener('pointerdown', onDown, true);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mousedown', onDown);
+      document.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('keydown', onKey);
     };
-  }, [menu]);
+  }, [menu, mediaMenu]);
 
   // 页内大图预览(弹窗,不开新标签):Esc 关闭,←/→ 多图切换
   const openPreview = useCallback((imgs: string[], index = 0) => {
@@ -2455,6 +2621,99 @@ function CanvasInner() {
     return () => window.removeEventListener('keydown', onKey);
   }, [preview]);
 
+  const fetchCanvasMedia = useCallback(async (url: string, filename: string): Promise<Blob> => {
+    const response = await authFetch('/v1/canvas/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, filename }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body?.message || body?.error?.message || `下载失败 (HTTP ${response.status})`);
+    }
+    return response.blob();
+  }, [authFetch]);
+
+  const downloadMedia = useCallback(async (url: string, category: CanvasMaterial['category']) => {
+    const fallbackName = `canvas-${Date.now()}.${category === 'Image' ? 'png' : category === 'Video' ? 'mp4' : category === 'Audio' ? 'mp3' : 'bin'}`;
+    const hide = message.loading('正在准备下载…', 0);
+    try {
+      const blob = await fetchCanvasMedia(url, fallbackName);
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (e: any) {
+      message.error(e?.message || '下载失败');
+    } finally {
+      hide();
+    }
+  }, [fetchCanvasMedia]);
+
+  const convertToMaterial = useCallback(async (id: string) => {
+    const node = nodesRef.current.find((nd) => nd.id === id);
+    if (!node) return;
+    const category: CanvasMaterial['category'] = node.data?.videoUrl ? 'Video' : node.data?.audioUrl ? 'Audio' : node.data?.model3dUrl ? 'Model' : 'Image';
+    const url = String(node.data?.videoUrl || node.data?.audioUrl || node.data?.model3dUrl || node.data?.images?.[0] || '');
+    if (!url) return;
+    const suggested = String(node.data?.materialName || node.data?.genPrompt || `${category} 素材`).trim().slice(0, 24);
+    const name = window.prompt('素材名称', suggested) || '';
+    if (!name.trim()) return;
+    const hide = message.loading('正在转为素材…', 0);
+    try {
+      const ext = category === 'Image' ? 'png' : category === 'Video' ? 'mp4' : category === 'Audio' ? 'mp3' : 'bin';
+      const blob = await fetchCanvasMedia(url, `canvas-material.${ext}`);
+      const safeName = name.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 80) || 'canvas-material';
+      const uploaded = await playgroundUpload(new File([blob], `${safeName}.${ext}`, { type: blob.type }), apiKey, {
+        module: 'canvas', purpose: 'material',
+      });
+      updateNodeData(id, { materialName: name.trim(), materialUrl: uploaded.url, materialAssetId: uploaded.id });
+      message.success(`已转为素材「${name.trim()}」，提示词输入 @ 可引用`);
+    } catch (e: any) {
+      message.error(e?.message || '转为素材失败');
+    } finally {
+      hide();
+    }
+  }, [apiKey, fetchCanvasMedia, updateNodeData]);
+
+  const loadStoredMaterials = useCallback(async () => {
+    setMaterialsLoading(true);
+    try {
+      const r = await authFetch('/v1/canvas/materials?size=100');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j?.message || `HTTP ${r.status}`);
+      setStoredMaterials(j?.data?.list || []);
+    } catch (e: any) {
+      message.error(e?.message || '素材库加载失败');
+    } finally {
+      setMaterialsLoading(false);
+    }
+  }, [authFetch]);
+
+  const openMaterialLibrary = useCallback(() => {
+    setMaterialLibraryOpen(true);
+    loadStoredMaterials();
+  }, [loadStoredMaterials]);
+
+  const addStoredMaterial = useCallback((item: StoredCanvasMaterial) => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const pos = rf.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+    const ct = String(item.content_type || '').toLowerCase();
+    const id = `image_${Date.now().toString(36)}`;
+    const media = ct.startsWith('video/') ? { videoUrl: item.url } : ct.startsWith('audio/') ? { audioUrl: item.url } : { images: [item.url] };
+    setNodes((nds) => nds.map((nd) => ({ ...nd, selected: false })).concat({
+      id, type: 'image', position: pos, selected: true,
+      data: { ...capDefault(capById('image'), modelsForCap(capById('image'), modelsByType)), ...media, materialAssetId: item.asset_id, assetId: item.upstream_asset_id || '', materialName: item.name || '素材', materialUrl: item.url },
+    }));
+    setMaterialLibraryOpen(false);
+    message.success('素材已加入当前画布');
+  }, [rf, setNodes, modelsByType]);
+
   if (!apiKey) {
     return (
       <div style={{ maxWidth: 420, margin: '48px auto' }}>
@@ -2467,11 +2726,51 @@ function CanvasInner() {
   const currentIcon = docs.find((d) => d.id === docId)?.icon || '🎨';
   const selImages = nodes.filter((nd) => nd.selected && nd.type === 'image');
   const anchor = selImages.length === 1 ? selImages[0] : null;
+  // @ 候选只取当前生成框直接连接的上游节点。连接关系决定作用域，类型可以是
+  // 普通图片、视频、音频或已登记素材；右键“转为素材”不是使用 @ 的前置条件。
+  const upstreamIds = new Set(anchor ? edges.filter((e) => e.target === anchor.id).map((e) => e.source) : []);
+  const materials: CanvasMaterial[] = [];
+  for (const nd of nodes) {
+    if (!upstreamIds.has(nd.id)) continue;
+    if (nd.type === 'material' && nd.data?.matStatus === 'ready' && nd.data?.srcUrl) {
+      const category = String(nd.data.assetType || 'Image') as CanvasMaterial['category'];
+      materials.push({
+        nodeId: nd.id,
+        name: String(nd.data.name || nd.data.assetId || '素材'),
+        url: String(nd.data.srcUrl),
+        referenceUrl: nd.data.assetId ? `asset://${String(nd.data.assetId).replace(/^asset:\/\//, '')}` : undefined,
+        category,
+        sourceType: 'material',
+      });
+      continue;
+    }
+    const label = String(nd.data?.materialName || nd.data?.genPrompt || '').trim();
+    ((nd.data?.images || []) as string[]).forEach((url, index) => materials.push({
+      nodeId: `${nd.id}:image:${index}`,
+      name: label ? `${label.slice(0, 18)}${(nd.data?.images || []).length > 1 ? ` ${index + 1}` : ''}` : `图片 ${materials.filter((m) => m.category === 'Image').length + 1}`,
+      url: String(url), category: 'Image', sourceType: 'image',
+    }));
+    if (nd.data?.videoUrl) materials.push({
+      nodeId: `${nd.id}:video`, name: label ? label.slice(0, 18) : `视频 ${materials.filter((m) => m.category === 'Video').length + 1}`,
+      url: String(nd.data.videoUrl), category: 'Video', sourceType: 'video',
+    });
+    if (nd.data?.audioUrl) materials.push({
+      nodeId: `${nd.id}:audio`, name: label ? label.slice(0, 18) : `音频 ${materials.filter((m) => m.category === 'Audio').length + 1}`,
+      url: String(nd.data.audioUrl), category: 'Audio', sourceType: 'audio',
+    });
+  }
+  const mediaMenuNode = mediaMenu ? nodes.find((nd) => nd.id === mediaMenu.nodeId) : undefined;
+  const mediaMenuURL = mediaMenuNode
+    ? String(mediaMenuNode.data?.videoUrl || mediaMenuNode.data?.audioUrl || mediaMenuNode.data?.model3dUrl || mediaMenuNode.data?.images?.[0] || '')
+    : '';
+  const mediaMenuCategory: CanvasMaterial['category'] = mediaMenuNode?.data?.videoUrl
+    ? 'Video' : mediaMenuNode?.data?.audioUrl ? 'Audio' : mediaMenuNode?.data?.model3dUrl ? 'Model' : 'Image';
 
   return (
     <CanvasCtx.Provider
       value={{
         runState, chatModels: modelsByType.chat || [], liveVoices, updateNodeData, selectNode, deleteNode, uploadAsset, openPreview,
+        downloadMedia, convertToMaterial,
         runLLM, runClone, openLive, runMaterial, startLiveness,
       }}
     >
@@ -2506,6 +2805,7 @@ function CanvasInner() {
             onPatch={(patch) => anchor && updateNodeData(anchor.id, patch)}
             onRun={() => anchor && runGenerator(anchor.id)}
             onAddRef={(file) => anchor && addAnchorRef(anchor.id, file)}
+            materials={materials}
           />
         </div>
 
@@ -2545,6 +2845,18 @@ function CanvasInner() {
                 <EditOutlined />
                 提示词
               </button>
+              <button className="cs-tool-btn" onClick={() => addNodeCenter('image', 'virtualman')}>
+                <UserOutlined />
+                数智人
+              </button>
+              <button className="cs-tool-btn" onClick={() => addNodeCenter('image', 'tryon')}>
+                <SkinOutlined />
+                换装
+              </button>
+              <button className="cs-tool-btn" onClick={openMaterialLibrary}>
+                <AppstoreOutlined />
+                素材库
+              </button>
               <button className="cs-tool-btn" onClick={() => addNodeCenter('clone')}>
                 <CustomerServiceOutlined />
                 音色
@@ -2566,6 +2878,33 @@ function CanvasInner() {
           </div>
         </div>
 
+        {materialLibraryOpen && (
+          <div className="canvas-material-library">
+            <div className="canvas-material-library-head">
+              <strong>素材库</strong>
+              <button title="关闭" onClick={() => setMaterialLibraryOpen(false)}><CloseOutlined /></button>
+            </div>
+            <div className="canvas-material-library-body">
+              {materialsLoading ? (
+                <div className="canvas-material-empty">加载中…</div>
+              ) : storedMaterials.length ? storedMaterials.map((item) => {
+                const ct = String(item.content_type || '').toLowerCase();
+                return (
+                  <button className="canvas-material-item" key={item.id} onClick={() => addStoredMaterial(item)}>
+                    <span className="canvas-material-preview">
+                      {ct.startsWith('image/') ? <img src={item.url} alt="" /> : ct.startsWith('video/') ? <video src={item.url} muted /> : <CustomerServiceOutlined />}
+                    </span>
+                    <span className="canvas-material-name">{item.name || `素材 ${item.asset_id}`}</span>
+                    <span className="canvas-material-type">{ct.startsWith('video/') ? '视频' : ct.startsWith('audio/') ? '音频' : '图片'}</span>
+                  </button>
+                );
+              }) : (
+                <div className="canvas-material-empty">暂无已转化素材</div>
+              )}
+            </div>
+          </div>
+        )}
+
         {menu && (
           <div
             className="create-menu open"
@@ -2584,6 +2923,25 @@ function CanvasInner() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {mediaMenu && mediaMenuNode && mediaMenuURL && (
+          <div
+            className="node-context-menu canvas-media-context-menu"
+            style={{ left: mediaMenu.x, top: mediaMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button onClick={() => { downloadMedia(mediaMenuURL, mediaMenuCategory); setMediaMenu(null); }}>
+              <DownloadOutlined /> 下载文件
+            </button>
+            <button
+              disabled={!!mediaMenuNode.data?.materialAssetId}
+              onClick={() => { convertToMaterial(mediaMenuNode.id); setMediaMenu(null); }}
+            >
+              <FolderAddOutlined /> {mediaMenuNode.data?.materialAssetId ? '已转为素材' : '转为素材'}
+            </button>
           </div>
         )}
 

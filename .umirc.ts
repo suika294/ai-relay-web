@@ -68,6 +68,7 @@ export default defineConfig({
     // Playground:公开在线调试,挂在首页公开导航(文档中心旁),无需登录。
     // 自带 PublicLayout(组件内包裹),密钥改为手动填写,不再进控制台。
     { path: '/playground', component: './playground', layout: false },
+    { path: '/canvas', component: './canvas', layout: false },
     { path: '/auth/login', component: './auth/login', layout: false },
     { path: '/auth/register', component: './auth/register', layout: false },
     { path: '/auth/forgot-password', component: './auth/forgot-password', layout: false },
