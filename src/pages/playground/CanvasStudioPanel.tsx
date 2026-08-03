@@ -1,5 +1,6 @@
 import {
   AppstoreOutlined,
+  AudioOutlined,
   BgColorsOutlined,
   BulbOutlined,
   ClockCircleOutlined,
@@ -9,12 +10,16 @@ import {
   ControlOutlined,
   CopyOutlined,
   CustomerServiceOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   ExpandOutlined,
   ExperimentOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
+  KeyOutlined,
+  LogoutOutlined,
+  MessageOutlined,
   FolderAddOutlined,
   PictureOutlined,
   PlusOutlined,
@@ -22,13 +27,17 @@ import {
   SkinOutlined,
   SmileOutlined,
   SoundOutlined,
+  RedoOutlined,
+  SnippetsOutlined,
   ThunderboltOutlined,
+  UndoOutlined,
   UploadOutlined,
   UserOutlined,
   VideoCameraAddOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
-import { message, Select } from 'antd';
+import { Input, message, Modal, Select } from 'antd';
+import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import ReactFlow, {
   addEdge,
@@ -77,6 +86,20 @@ type ModelInfo = { value: string; label: string; providerType?: string };
 type VoiceProvider = 'tencent' | 'openai' | 'minimax' | 'dashscope' | 'kling';
 type ModelsByType = Record<string, ModelInfo[]>; // 按 systemApi.models 的 type 分组
 type RunInfo = { status: 'running' | 'failed'; error?: string; startedAt?: number };
+type MediaSnapshot = {
+  images?: string[];
+  videoUrl?: string;
+  audioUrl?: string;
+  model3dUrl?: string;
+  mediaItems?: NodeMediaItem[];
+};
+type NodeMediaItem = { url: string; kind: MediaKind; name?: string };
+type GenerationBatch = MediaSnapshot & {
+  id: string;
+  createdAt: number;
+  prompt?: string;
+  kind?: string;
+};
 type CanvasMaterial = {
   nodeId: string;
   name: string;
@@ -241,6 +264,63 @@ const GEN_DURATION: ModelOpt[] = ['5', '10', '15', '30', '60', '120'].map((v) =>
 const VM_RESOLUTION: ModelOpt[] = [EMO('720P', '720P'), EMO('1080P', '1080P')];
 const VM_WAN_RESOLUTION: ModelOpt[] = [EMO('480P', '480P'), EMO('720P', '720P')];
 
+// ============ 3D 操作(混元 3D 全家桶)============
+// 3D 模型分两类:图/文 → 3D(基础生成),以及以「一个已有 3D 文件」为主入参的 3D→3D 操作
+// (纹理/减面/拆件/UV/绑骨蒙皮/动作/格式转换)。口径与独立 3D 面板 ThreeDPanel 保持一致。
+type ThreeDOp = 'gen' | 'profile' | 'texture' | 'reduceface' | 'part' | 'uv' | 'motion' | 'rigging' | 'convert';
+function threeDOpOf(model?: string): ThreeDOp {
+  const m = (model || '').toLowerCase();
+  if (m.includes('profile')) return 'profile';
+  if (m.includes('texture')) return 'texture';
+  if (m.includes('reduceface') || m.includes('reduce-face') || m.includes('topology')) return 'reduceface';
+  if (m.includes('part')) return 'part';
+  if (m.includes('convert')) return 'convert';
+  if (m.includes('motion')) return 'motion';
+  if (m.includes('rig')) return 'rigging';
+  if (m.includes('uv')) return 'uv';
+  return 'gen';
+}
+// 必须要有输入 3D 文件的 op(motion 的模型是可选的动作重定向对象,不强制)。
+const THREED_NEEDS_MODEL: ThreeDOp[] = ['texture', 'reduceface', 'part', 'uv', 'rigging', 'convert'];
+// 各 op 上游能接受的模型格式(腾讯侧限制,和 ThreeDPanel 的 opAcceptModelExts 一致)。
+function threeDAcceptExts(op: ThreeDOp): string[] {
+  switch (op) {
+    case 'part':
+      return ['fbx'];
+    case 'reduceface':
+    case 'texture':
+      return ['obj', 'glb'];
+    case 'rigging':
+      return ['fbx', 'glb'];
+    default:
+      return ['fbx', 'obj', 'glb', 'gltf', 'stl'];
+  }
+}
+// 从 URL/文件名推腾讯要的 InputModelType(FBX/OBJ/GLB/GLTF/STL)。
+function threeDModelType(url?: string): string {
+  const u = (url || '').toLowerCase().split(/[?#]/)[0];
+  for (const e of ['glb', 'gltf', 'obj', 'fbx', 'stl']) {
+    if (u.endsWith('.' + e)) return e.toUpperCase();
+  }
+  return '';
+}
+const THREED_ON_OFF: ModelOpt[] = [EMO('on', '开'), EMO('off', '关')];
+const THREED_TEXTURE_VER: ModelOpt[] = [EMO('3.0', '3.0'), EMO('3.1', '3.1')];
+const THREED_POLYGON: ModelOpt[] = [EMO('', '默认'), EMO('triangle', '三角面'), EMO('quadrilateral', '四边面')];
+const THREED_FACE_LEVEL: ModelOpt[] = [EMO('', '默认'), EMO('high', '高'), EMO('medium', '中'), EMO('low', '低')];
+const THREED_CONVERT_FMT: ModelOpt[] = ['STL', 'USDZ', 'FBX', 'MP4', 'GIF'].map((v) => EMO(v, v));
+const THREED_MOTION_DURATION: ModelOpt[] = ['3', '5', '8', '10', '12'].map((v) => EMO(v, `${v}s`));
+// 绑骨蒙皮的预置动作编号(腾讯 motion_type 1–48),留空=只绑骨不套动作。
+const THREED_MOTION_TYPE: ModelOpt[] = [EMO('', '仅绑骨')].concat(
+  Array.from({ length: 48 }, (_, i) => EMO(String(i + 1), `动作 ${i + 1}`)),
+);
+const THREED_PROFILE_TEMPLATE: ModelOpt[] = [EMO('', '不用模板')].concat(
+  ['basketball', 'badminton', 'pingpong', 'gymnastics', 'pilidance', 'tennis', 'athletics',
+    'footballboykicking1', 'footballboykicking2', 'guitar', 'footballboy', 'skateboard',
+    'futuresoilder', 'explorer', 'beardollgirl', 'bibpantsboy', 'womansitpose',
+    'womanstandpose2', 'mysteriousprincess', 'manstandpose2'].map((v) => EMO(v, v)),
+);
+
 // ============ 能力注册表 ============
 // 画布的每一种生成能力(图片/视频/音频/…后续换装/特效/3D)都是一条声明式配置:
 // 声明「用哪种模型、要不要参考图、参数怎么出、走哪个端点、结果落成什么」。
@@ -251,6 +331,8 @@ type CapRequest =
   | { transport: 'async'; path: string; body: Record<string, unknown>; pollBase: string; extract: (t: any) => string[] }
   // 同步二进制(如 TTS):POST path → blob,上传拿持久 URL
   | { transport: 'syncBinary'; path: string; body: Record<string, unknown>; filename: string }
+  // 同步 JSON(如 3D 格式转换):POST path → json,直接从响应里取结果 URL,不轮询
+  | { transport: 'syncJSON'; path: string; body: Record<string, unknown>; extract: (r: any) => string[] }
   // 分段 TTS:每段可带独立语气,全部返回后在浏览器拼成一条 WAV。
   | { transport: 'segmentedAudio'; path: string; body: Record<string, unknown>; chunks: EmotionChunk[]; filename: string };
 type CapOutput = 'image' | 'video' | 'audio' | 'model3d';
@@ -266,24 +348,56 @@ type Capability = {
   // 默认(单主体:图片/视频/特效/3D/数智人)= 有自身图就只用自身,否则回退上游,不叠加祖先图
   usesPrompt?: boolean; // 是否显示提示词框(默认显示;特效等纯图驱动置 false)
   usesAudio?: boolean; // 是否需要上游音频节点作驱动音频(数智人)
-  refsHint?: string; // 无参考图时的提示文案(覆盖默认「首帧 / 加参考图」)
+  refsHint?: string | ((data: any) => string); // 无参考图时的提示文案(覆盖默认「首帧 / 加参考图」);3D 按 op 变
   audioHint?: string; // 需要音频时的提示文案
   showCount?: boolean; // 图片张数控件
   stylePresets?: boolean; // 风格预设按钮
   promptPlaceholder: string;
-  validate: (a: { prompt: string; refs: string[]; audio: string[]; data: any }) => string | null; // 返回错误提示或 null
+  // models3d:上游/自身带进来的 3D 模型文件 URL(3D→3D 操作的主入参)
+  validate: (a: { prompt: string; refs: string[]; audio: string[]; models3d: string[]; data: any }) => string | null; // 返回错误提示或 null
   params: (data: any, models: ModelInfo[]) => ParamDef[]; // 动态参数药丸
   defaults: (models: ModelInfo[]) => Record<string, unknown>; // 选中该能力时的初始设置
   onModelChange: (v: string, models: ModelInfo[]) => Record<string, unknown>; // 换模型时的设置补丁
-  request: (a: { model: string; prompt: string; refs: string[]; audio: string[]; data: any }) => CapRequest;
+  request: (a: { model: string; prompt: string; refs: string[]; audio: string[]; models3d: string[]; data: any }) => CapRequest;
 };
 
 // 结果 URL(s) → 节点数据补丁(按输出媒体类型落到不同字段)
 function applyOutput(output: CapOutput, urls: string[]): Record<string, unknown> {
   if (output === 'image') return { images: urls };
   if (output === 'video') return { videoUrl: urls[0] };
-  if (output === 'model3d') return { model3dUrl: urls[0] };
+  if (output === 'model3d') {
+    // 3D 侧也能产出非模型结果:格式转换可以转 MP4/GIF,基础生成也支持 MP4 预览。
+    // 只在后缀明确是视频/图片时改落点,其余(含无后缀的签名 URL)一律当模型交给 SceneViewer。
+    const u = (urls[0] || '').toLowerCase().split(/[?#]/)[0];
+    if (/\.(mp4|webm|mov)$/.test(u)) return { videoUrl: urls[0] };
+    if (/\.(gif|png|jpe?g|webp)$/.test(u)) return { images: [urls[0]] };
+    return { model3dUrl: urls[0] };
+  }
   return { audioUrl: urls[0] };
+}
+
+function outputSnapshot(output: CapOutput, urls: string[]): MediaSnapshot {
+  return {
+    images: [],
+    videoUrl: undefined,
+    audioUrl: undefined,
+    model3dUrl: undefined,
+    mediaItems: undefined,
+    ...applyOutput(output, urls),
+  };
+}
+
+// 输入缩略图行的手动排序:节点 data.inputOrder 存的是用户拖出来的 URL 次序。
+// 只重排「在 inputOrder 里出现过」的项,其余项留在原来的槽位不动 —— 这样 fileInfosFor 里
+// 「已登记素材优先」之类的既有规则不会被一次拖拽打乱,新连进来的输入也不会被挤到末尾。
+function applyInputOrder<T>(items: T[], order: string[] | undefined, urlOf: (it: T) => string): T[] {
+  if (!order?.length || items.length < 2) return items;
+  const rank = new Map(order.map((u, i) => [u, i]));
+  const movable = items.filter((it) => rank.has(urlOf(it)));
+  if (movable.length < 2) return items;
+  movable.sort((a, b) => (rank.get(urlOf(a)) as number) - (rank.get(urlOf(b)) as number));
+  let k = 0;
+  return items.map((it) => (rank.has(urlOf(it)) ? movable[k++] : it));
 }
 
 // 只读取媒体 metadata，不下载完整文件。浏览器无法解析时返回 null，交给上游继续校验。
@@ -570,25 +684,142 @@ const CAPABILITIES: Capability[] = [
     },
   },
   {
-    // 3D:图生 3D / 文生 3D → glb/splat 模型。结果落 model3dUrl,节点内 three.js SceneViewer 查看。
+    // 3D:两类。① 图/文 → 3D(基础生成);② 3D→3D 操作 —— 纹理 / 减面 / 拆件 / UV /
+    // 绑骨蒙皮 / 动作 / 格式转换,主入参是上游节点的 model3dUrl(上传的或前一步生成的)。
+    // 走哪一类由选中的模型决定(threeDOpOf),结果统一落 model3dUrl 交给 SceneViewer。
     id: '3d', label: '3D', icon: <ExperimentOutlined />, output: 'model3d', modelType: '3d',
-    usesRefs: true, refsHint: '连接/加 1 张图(图生 3D;留空则纯文生 3D)',
-    promptPlaceholder: '文生 3D 描述(有图可空)…',
-    validate: ({ prompt, refs }) => (prompt || refs.length ? null : '填写描述或加 1 张图'),
-    params: () => [],
+    usesRefs: true,
+    refsHint: (d) => {
+      const op = threeDOpOf(d?.model);
+      if (THREED_NEEDS_MODEL.includes(op)) return `上游连一个 ${threeDAcceptExts(op).join('/').toUpperCase()} 模型节点`;
+      if (op === 'motion') return '文生动作;可选连一个模型节点做动作重定向';
+      return '连接/加 1 张图(图生 3D;留空则纯文生 3D)';
+    },
+    promptPlaceholder: '文生 3D 描述(有图可空;纹理/动作也吃描述)…',
+    validate: ({ prompt, refs, models3d, data }) => {
+      const op = threeDOpOf(data?.model);
+      if (THREED_NEEDS_MODEL.includes(op)) {
+        const exts = threeDAcceptExts(op);
+        if (!models3d.length) return `该操作需要一个输入 3D 模型:上游连一个 ${exts.join('/').toUpperCase()} 节点(上传或上一步生成的)`;
+        const ext = threeDModelType(models3d[0]).toLowerCase();
+        if (ext && !exts.includes(ext)) return `该操作只接受 ${exts.join('/').toUpperCase()},当前上游是 ${ext.toUpperCase()}`;
+        return null;
+      }
+      if (op === 'motion') return prompt ? null : '填写动作描述';
+      if (op === 'profile') return prompt || refs.length || data?.profileTemplate ? null : '填写描述、加 1 张图或选一个动作模板';
+      return prompt || refs.length ? null : '填写描述或加 1 张图';
+    },
+    params: (d) => {
+      switch (threeDOpOf(d?.model)) {
+        case 'texture':
+          return [
+            { icon: <BgColorsOutlined />, label: 'PBR', field: 'enablePBR', opts: THREED_ON_OFF, def: 'on' },
+            { icon: <ControlOutlined />, label: '版本', field: 'textureVersion', opts: THREED_TEXTURE_VER, def: '3.0' },
+          ];
+        case 'reduceface':
+          return [
+            { icon: <AppstoreOutlined />, label: '面型', field: 'polygonType', opts: THREED_POLYGON, def: '' },
+            { icon: <ControlOutlined />, label: '精度', field: 'faceLevel', opts: THREED_FACE_LEVEL, def: '' },
+          ];
+        case 'rigging':
+          return [{ icon: <UserOutlined />, label: '动作', field: 'motionType', opts: THREED_MOTION_TYPE, def: '' }];
+        case 'motion':
+          return [
+            { icon: <ClockCircleOutlined />, label: '时长', field: 'motionDuration', opts: THREED_MOTION_DURATION, def: '5' },
+            { icon: <AppstoreOutlined />, label: '带网格', field: 'enableMesh', opts: THREED_ON_OFF, def: 'on' },
+          ];
+        case 'convert':
+          return [{ icon: <ControlOutlined />, label: '转为', field: 'convertFormat', opts: THREED_CONVERT_FMT, def: 'STL' }];
+        case 'profile':
+          return [{ icon: <UserOutlined />, label: '模板', field: 'profileTemplate', opts: THREED_PROFILE_TEMPLATE, def: '' }];
+        default:
+          return [];
+      }
+    },
     defaults: (models) => ({ model: models[0]?.value }),
     onModelChange: (v) => ({ model: v }),
-    request: ({ model, prompt, refs }) => ({
-      transport: 'async', path: '/v1/3d/generations', pollBase: '/v1/3d/generations/',
-      body: { model, ...(refs.length ? { images: [refs[0]] } : {}), ...(prompt ? { prompt } : {}) },
-      extract: (t) => {
-        const u = t?.result_url || (t?.files || []).find((f: any) => f.url)?.url;
-        return u ? [u] : [];
-      },
-    }),
+    request: ({ model, prompt, refs, models3d, data }) => {
+      const op = threeDOpOf(model);
+      const inputModel = models3d[0];
+      // 格式转换是同步端点,body 口径也不同(file_url + format),单独出。
+      if (op === 'convert') {
+        return {
+          transport: 'syncJSON', path: '/v1/3d/convert',
+          body: { model, file_url: inputModel, format: data?.convertFormat || 'STL' },
+          extract: (r) => (r?.result_url ? [r.result_url] : []),
+        };
+      }
+      const body: Record<string, unknown> = { model };
+      const params: Record<string, unknown> = {};
+      if (inputModel && (THREED_NEEDS_MODEL.includes(op) || op === 'motion')) {
+        body.input_model_url = inputModel;
+        const t = threeDModelType(inputModel);
+        if (t) body.input_model_type = t;
+      }
+      switch (op) {
+        case 'texture':
+          body.enable_pbr = data?.enablePBR !== 'off';
+          if (data?.textureVersion) params.model_version = data.textureVersion;
+          if (refs.length) body.images = [refs[0]];
+          break;
+        case 'reduceface':
+          if (data?.polygonType) params.polygon_type = data.polygonType;
+          if (data?.faceLevel) params.face_level = data.faceLevel;
+          break;
+        case 'part':
+          params.model_version = '1.5';
+          break;
+        case 'rigging':
+          if (data?.motionType) params.motion_type = Number(data.motionType);
+          break;
+        case 'motion':
+          params.duration = Number(data?.motionDuration || 5);
+          params.enable_mesh = data?.enableMesh !== 'off';
+          break;
+        case 'profile':
+          if (data?.profileTemplate) params.template = data.profileTemplate;
+          if (refs.length) body.images = [refs[0]];
+          break;
+        default:
+          // 基础生成:图生 3D / 文生 3D,维持原有最小口径
+          if (refs.length) body.images = [refs[0]];
+          break;
+      }
+      // 只有吃描述的 op 才发 prompt:减面/UV/拆件/绑骨蒙皮是纯几何操作,腾讯侧没有这个字段;
+      // 纹理有参考图时也以图为准(和 ThreeDPanel 的 wantPrompt 口径一致)。
+      const wantsPrompt = op === 'gen' || op === 'motion' || op === 'profile' || (op === 'texture' && !refs.length);
+      if (prompt && wantsPrompt) body.prompt = prompt;
+      if (Object.keys(params).length) body.parameters = params;
+      return {
+        transport: 'async', path: '/v1/3d/generations', pollBase: '/v1/3d/generations/', body,
+        extract: (t) => {
+          const u = t?.result_url || (t?.files || []).find((f: any) => f.url)?.url;
+          return u ? [u] : [];
+        },
+      };
+    },
   },
 ];
 const capById = (id?: string): Capability => CAPABILITIES.find((c) => c.id === id) || CAPABILITIES[0];
+const COMPOSER_GROUPS = [
+  { id: 'prompt', label: '提示词', icon: <EditOutlined />, caps: [] },
+  { id: 'image', label: '图像', icon: <PictureOutlined />, caps: ['image'] },
+  { id: 'video', label: '视频', icon: <VideoCameraOutlined />, caps: ['video', 'effects', 'multiframe'] },
+  { id: 'audio', label: '音频', icon: <CustomerServiceOutlined />, caps: ['audio'] },
+  { id: 'digital-human', label: '数字人', icon: <UserOutlined />, caps: ['virtualman'] },
+  { id: 'aigc', label: 'AIGC素材', icon: <AppstoreOutlined />, caps: ['template', 'tryon', 'ad', 'oneclick'] },
+  { id: '3d', label: '3D', icon: <ExperimentOutlined />, caps: ['3d'] },
+];
+const composerGroupFor = (capId: string) => COMPOSER_GROUPS.find((g) => g.caps.includes(capId)) || COMPOSER_GROUPS[1];
+// 老画布允许在同一个结果节点上跨类型切换，可能留下“视频内容 + kind=3d”这类脏状态。
+// 已有媒体是节点最可靠的类型事实；只有空节点才继续采用 kind 配置。
+function capabilityForNode(data: Record<string, any>): Capability {
+  const configured = capById(data.kind);
+  if (data.videoUrl && configured.output !== 'video') return capById('video');
+  if (data.audioUrl && configured.output !== 'audio') return capById('audio');
+  if (data.model3dUrl && configured.output !== 'model3d') return capById('3d');
+  return configured;
+}
 // 在能力的 modelType 内应用 modelFilter,得到该能力可用的模型列表
 function modelsForCap(cap: Capability, byType: ModelsByType): ModelInfo[] {
   const list = byType[cap.modelType] || [];
@@ -618,8 +849,29 @@ type Ctx = {
   openLive: (id: string) => void;
   runMaterial: (id: string, args: MaterialArgs) => void;
   startLiveness: (id: string) => void;
+  openNodeCreate: (id: string, side: 'left' | 'right', anchor: HTMLElement) => void;
+  selectBatch: (id: string, index: number) => void;
 };
 const CanvasCtx = createContext<Ctx>({} as Ctx);
+
+function NodePorts({ id }: { id: string }) {
+  const { openNodeCreate } = useContext(CanvasCtx);
+  const open = (side: 'left' | 'right') => (e: ReactMouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openNodeCreate(id, side, e.currentTarget);
+  };
+  return (
+    <>
+      <Handle type="target" position={Position.Left} className="node-combined-port" title="在左侧添加节点" onClick={open('left')}>
+        <PlusOutlined />
+      </Handle>
+      <Handle type="source" position={Position.Right} className="node-combined-port" title="在右侧添加空节点，并连接当前结果" onClick={open('right')}>
+        <PlusOutlined />
+      </Handle>
+    </>
+  );
+}
 
 const MATERIAL_ASSET_TYPE: ModelOpt[] = [EMO('Image', '图片'), EMO('Video', '视频'), EMO('Audio', '音频')];
 
@@ -644,7 +896,7 @@ const LLM_MODES: { value: string; label: string; system: string }[] = [
 const llmModeSystem = (mode?: string) => LLM_MODES.find((m) => m.value === mode)?.system || LLM_MODES[0].system;
 
 const KNOWN_TYPES = new Set(['image', 'prompt', 'clone', 'live', 'material']);
-const COMPOSER_W = 520;
+const COMPOSER_W = 640;
 
 // 复制文本:优先剪贴板 API(localhost/https 可用),否则 textarea + execCommand 兜底;都给 toast 反馈
 async function copyText(text: string) {
@@ -678,9 +930,38 @@ function defaultParams(model?: string) {
   };
 }
 
+// 媒体归类:优先看 MIME,拿不到 type 时按文件名/URL 扩展名兜底 —— .glb/.spz 这类 3D 文件
+// 浏览器基本给不出 MIME(空或 application/octet-stream),只能靠后缀。上传节点与素材库共用,
+// 避免两处口径漂移。
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm|mkv|avi|flv|wmv|mpe?g|ts)(\?|#|$)/i;
+const AUDIO_EXT = /\.(mp3|wav|m4a|aac|flac|ogg|opus|wma|amr|aiff?)(\?|#|$)/i;
+const MODEL3D_EXT = /\.(glb|gltf|ply|spz|splat|ksplat|obj|fbx|usdz?|stl|3mf)(\?|#|$)/i;
+type MediaKind = 'image' | 'video' | 'audio' | 'model3d';
+function mediaKindOf(contentType?: string, nameOrURL?: string): MediaKind {
+  const ct = (contentType || '').toLowerCase();
+  const name = nameOrURL || '';
+  if (ct.startsWith('video/')) return 'video';
+  if (ct.startsWith('audio/')) return 'audio';
+  if (ct.startsWith('model/') || ct.startsWith('application/vnd.usdz') || ct.startsWith('application/vnd.autodesk.fbx')) return 'model3d';
+  if (ct.startsWith('image/')) return 'image';
+  if (VIDEO_EXT.test(name)) return 'video';
+  if (AUDIO_EXT.test(name)) return 'audio';
+  if (MODEL3D_EXT.test(name)) return 'model3d';
+  return 'image';
+}
+// 当前密钥的打码展示:留头留尾,中间打码,足够辨认是哪一把又不至于被肩窥抄走。
+function maskKey(k: string): string {
+  if (!k) return '未设置';
+  if (k.length <= 12) return `${k.slice(0, 4)}****`;
+  return `${k.slice(0, 7)}****${k.slice(-4)}`;
+}
+
+// 文件选择框的 accept:3D 没有可靠的通配 MIME,必须把后缀逐个列出来。
+const UPLOAD_ACCEPT = 'image/*,video/*,audio/*,model/*,.glb,.gltf,.ply,.spz,.splat,.ksplat,.obj,.fbx,.usdz,.stl,.3mf';
+
 // ============ 图片节点(上传 / 生成落图) ============
 function ImageNode({ id, data }: NodeProps) {
-  const { updateNodeData, selectNode, deleteNode, uploadAsset, runState, openPreview, downloadMedia } = useContext(CanvasCtx);
+  const { updateNodeData, selectNode, deleteNode, uploadAsset, runState, openPreview, downloadMedia, openNodeCreate, selectBatch } = useContext(CanvasCtx);
   const ref = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -689,15 +970,18 @@ function ImageNode({ id, data }: NodeProps) {
   const videoUrl: string | undefined = data.videoUrl;
   const audioUrl: string | undefined = data.audioUrl;
   const model3dUrl: string | undefined = data.model3dUrl;
+  const mediaItems: NodeMediaItem[] = data.mediaItems || [];
   const run = runState[id];
   const hasImg = images.length > 0;
-  const hasContent = hasImg || !!videoUrl || !!audioUrl || !!model3dUrl;
+  const hasContent = mediaItems.length > 0 || hasImg || !!videoUrl || !!audioUrl || !!model3dUrl;
   const primaryUrl = videoUrl || audioUrl || model3dUrl || images[0];
   const mediaCategory: CanvasMaterial['category'] = videoUrl ? 'Video' : audioUrl ? 'Audio' : model3dUrl ? 'Model' : 'Image';
   const scene3dKind = model3dUrl ? classifyThreeDFile(undefined, model3dUrl) : null;
   // 生成节点标记 + 它对应的提示词/能力 —— 用来在图上标注「这是什么、由哪句提示词生成」,
   // 也用来区分「生成结果节点」和「纯上传节点」(结果没出来时不该退化成上传空框)。
   const isResult = !!data.isResult;
+  const batches: GenerationBatch[] = data.generationBatches || [];
+  const activeBatch = Math.min(Number(data.activeBatch || 0), Math.max(0, batches.length - 1));
   const genCap = isResult ? capById(data.genKind || data.kind) : null; // 仅用于「结果待生成」占位的图标
 
   // 生成计时:running 期间每 200ms 刷新已用秒数
@@ -709,14 +993,30 @@ function ImageNode({ id, data }: NodeProps) {
     return () => clearInterval(t);
   }, [run?.status, run?.startedAt]);
 
-  const put = useCallback(
-    async (f?: File | null) => {
-      if (!f) return;
-      const url = await uploadAsset(f);
-      if (url) updateNodeData(id, { images: [...(data.images || []), url] });
-    },
-    [uploadAsset, updateNodeData, id, data.images],
-  );
+  const putMany = useCallback(async (files: File[]) => {
+    if (!files.length) return;
+    const uploaded = await Promise.all(files.map(async (file) => {
+      const url = await uploadAsset(file);
+      return url ? { url, kind: mediaKindOf(file.type, file.name), name: file.name } as NodeMediaItem : null;
+    }));
+    const nextItems = uploaded.filter(Boolean) as NodeMediaItem[];
+    if (!nextItems.length) return;
+    const legacyItems: NodeMediaItem[] = mediaItems.length ? mediaItems : [
+      ...images.map((url) => ({ url, kind: 'image' as const })),
+      ...(videoUrl ? [{ url: videoUrl, kind: 'video' as const }] : []),
+      ...(audioUrl ? [{ url: audioUrl, kind: 'audio' as const }] : []),
+      ...(model3dUrl ? [{ url: model3dUrl, kind: 'model3d' as const }] : []),
+    ];
+    const allItems = [...legacyItems, ...nextItems];
+    const imageURLs = allItems.filter((item) => item.kind === 'image').map((item) => item.url);
+    updateNodeData(id, {
+      mediaItems: allItems,
+      images: imageURLs,
+      videoUrl: allItems.find((item) => item.kind === 'video')?.url,
+      audioUrl: allItems.find((item) => item.kind === 'audio')?.url,
+      model3dUrl: allItems.find((item) => item.kind === 'model3d')?.url,
+    });
+  }, [id, mediaItems, images, videoUrl, audioUrl, model3dUrl, updateNodeData, uploadAsset]);
 
   return (
     <div
@@ -724,8 +1024,27 @@ function ImageNode({ id, data }: NodeProps) {
       data-canvas-media-node={hasContent ? id : undefined}
       onPointerDownCapture={() => selectNode(id)}
     >
-      <Handle type="target" position={Position.Left} />
-      {videoUrl ? (
+      <NodePorts id={id} />
+      {mediaItems.length > 1 ? (
+        <div className="media-album nodrag">
+          {mediaItems.map((item, index) => (
+            <button
+              type="button"
+              className="media-album-item"
+              key={`${item.url}_${index}`}
+              title={item.name || `素材 ${index + 1}`}
+              onClick={() => item.kind === 'image' && openPreview(mediaItems.filter((m) => m.kind === 'image').map((m) => m.url), mediaItems.filter((m) => m.kind === 'image').findIndex((m) => m.url === item.url))}
+            >
+              {item.kind === 'image' ? <img src={item.url} alt={item.name || ''} />
+                : item.kind === 'video' ? <video src={item.url} muted preload="metadata" />
+                : item.kind === 'audio' ? <CustomerServiceOutlined />
+                : <ExperimentOutlined />}
+              <span>{index + 1}</span>
+            </button>
+          ))}
+          <div className="media-album-count">{mediaItems.length} 个素材</div>
+        </div>
+      ) : videoUrl ? (
         <div className="media-card">
           <video src={videoUrl} controls playsInline />
         </div>
@@ -801,11 +1120,11 @@ function ImageNode({ id, data }: NodeProps) {
               onDrop={(e) => {
                 e.preventDefault();
                 setOver(false);
-                put(e.dataTransfer.files?.[0]);
+                putMany(Array.from(e.dataTransfer.files || []));
               }}
             >
               <UploadOutlined />
-              <span>上传图片,或选中后在下方生成</span>
+              <span>上传图片/视频/音频/3D 模型,或选中后在下方生成</span>
             </div>
           </div>
         </>
@@ -839,14 +1158,44 @@ function ImageNode({ id, data }: NodeProps) {
           生成中 {elapsed < 100 ? elapsed.toFixed(1) : Math.round(elapsed)}s
         </span>
       )}
+      {isResult && batches.length > 0 && (
+        <div className="node-batch-bar nodrag">
+          <div className="batch-switcher" aria-label="生成批次">
+            <button
+              type="button"
+              disabled={activeBatch <= 0}
+              aria-label="上一批结果"
+              onClick={(e) => { e.stopPropagation(); selectBatch(id, activeBatch - 1); }}
+            >‹</button>
+            <span>批次 {activeBatch + 1} / {batches.length}</span>
+            <button
+              type="button"
+              disabled={activeBatch >= batches.length - 1}
+              aria-label="下一批结果"
+              onClick={(e) => { e.stopPropagation(); selectBatch(id, activeBatch + 1); }}
+            >›</button>
+          </div>
+          <button
+            type="button"
+            className="add-next-step"
+            title="在右侧添加空节点，并连接当前选中的结果"
+            onClick={(e) => { e.stopPropagation(); openNodeCreate(id, 'right', e.currentTarget); }}
+          >
+            <PlusOutlined /> 添加节点
+          </button>
+        </div>
+      )}
       <input
         ref={ref}
         type="file"
-        accept="image/*"
+        multiple
+        accept={UPLOAD_ACCEPT}
         style={{ display: 'none' }}
-        onChange={(e) => put(e.target.files?.[0])}
+        onChange={(e) => {
+          putMany(Array.from(e.target.files || []));
+          e.target.value = '';
+        }}
       />
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
@@ -860,7 +1209,7 @@ function PromptNode({ id, data }: NodeProps) {
   const mode = data.llmMode || 'expand';
   return (
     <div className="sc-node sc-prompt">
-      <Handle type="target" position={Position.Left} />
+      <NodePorts id={id} />
       <div className="prompt-node-card">
         <textarea
           className="prompt-node-text nodrag"
@@ -916,7 +1265,6 @@ function PromptNode({ id, data }: NodeProps) {
           <CloseOutlined />
         </button>
       </div>
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
@@ -934,7 +1282,7 @@ function CloneNode({ id, data }: NodeProps) {
 
   return (
     <div className="sc-node sc-clone">
-      <Handle type="target" position={Position.Left} />
+      <NodePorts id={id} />
       <div className="clone-card nodrag">
         <div className="clone-title">
           <CustomerServiceOutlined /> 音色克隆
@@ -1031,7 +1379,6 @@ function CloneNode({ id, data }: NodeProps) {
           <CloseOutlined />
         </button>
       </div>
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
@@ -1043,7 +1390,7 @@ function LiveNode({ id, data }: NodeProps) {
   const customVoices = liveVoices.filter((v) => v.system === false);
   return (
     <div className="sc-node sc-live">
-      <Handle type="target" position={Position.Left} />
+      <NodePorts id={id} />
       <div className="live-card nodrag">
         <div className="clone-title">
           <VideoCameraOutlined /> 数字人直播
@@ -1129,7 +1476,6 @@ function LiveNode({ id, data }: NodeProps) {
           <CloseOutlined />
         </button>
       </div>
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
@@ -1156,7 +1502,7 @@ function MaterialNode({ id, data }: NodeProps) {
 
   return (
     <div className="sc-node sc-material">
-      <Handle type="target" position={Position.Left} />
+      <NodePorts id={id} />
       <div className="clone-card">
         <div className="clone-title material-drag-handle">
           <AppstoreOutlined /> 素材登记
@@ -1263,19 +1609,20 @@ function MaterialNode({ id, data }: NodeProps) {
           <CloseOutlined />
         </button>
       </div>
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
 
 const nodeTypes = { image: ImageNode, prompt: PromptNode, clone: CloneNode, live: LiveNode, material: MaterialNode };
 
-const CREATE_CARDS: { type: string; label: string; sub: string; icon: JSX.Element }[] = [
-  { type: 'image', label: '上传', sub: '导入图片,或作为文生图/改图的落点', icon: <PictureOutlined /> },
-  { type: 'prompt', label: '提示词', sub: '手写文本 / AI 扩写,连到生成节点当 prompt', icon: <EditOutlined /> },
-  { type: 'clone', label: '音色克隆', sub: '样本音频→voice_id,下游 TTS 自动复用', icon: <CustomerServiceOutlined /> },
-  { type: 'live', label: '数字人直播', sub: '拼头像/人设/音色,浮层里实时直播', icon: <VideoCameraOutlined /> },
-  { type: 'material', label: '素材登记', sub: '上传媒体→Tencent AssetId(可真人)', icon: <AppstoreOutlined /> },
+const CREATE_CARDS: { id: string; type: string; capabilityId?: string; label: string; sub: string; icon: JSX.Element }[] = [
+  { id: 'prompt', type: 'prompt', label: '提示词', sub: '手写文本 / AI 扩写，连接到生成节点', icon: <EditOutlined /> },
+  { id: 'image', type: 'image', capabilityId: 'image', label: '图像', sub: '生成或编辑图片，支持参考图', icon: <PictureOutlined /> },
+  { id: 'video', type: 'image', capabilityId: 'video', label: '视频', sub: '文生视频或用图片生成视频', icon: <VideoCameraOutlined /> },
+  { id: 'audio', type: 'image', capabilityId: 'audio', label: '音频', sub: '文本转语音，选择音色与语气', icon: <CustomerServiceOutlined /> },
+  { id: 'digital-human', type: 'image', capabilityId: 'virtualman', label: '数字人', sub: '头像与音频驱动数字人口播', icon: <UserOutlined /> },
+  { id: 'aigc-material', type: 'material', label: 'AIGC素材', sub: '上传媒体并登记为可复用素材', icon: <AppstoreOutlined /> },
+  { id: '3d', type: 'image', capabilityId: '3d', label: '3D', sub: '通过文字、图片或模型生成 3D', icon: <ExperimentOutlined /> },
 ];
 
 // smart-pill + smart-popover 参数控件(纯 CSS hover 展开,对齐参考 smart-canvas 的 .smart-control)
@@ -1382,6 +1729,66 @@ function CountPill({ value, onChange }: { value: number; onChange: (v: number) =
 
 const STYLE_PRESETS = ['绘铅', '油画', '水彩', '3D 渲染', '赛博朋克', '写实摄影', '动漫', '极简线稿'];
 
+// 光标前的 "@xxx" 片段,没有就返回 null(null = 不展开候选菜单)
+function mentionQueryAt(value: string, caret: number): string | null {
+  const match = value.slice(0, caret).match(/@([^@\s]*)$/);
+  return match ? match[1] : null;
+}
+
+// 把 @素材 写进提示词,并同步 mentionMaterials / refs。
+// 已由上游连线带进来的图(derivedRefs)不再塞进手动 refs,否则输入区会重复出现同一张缩略图。
+function applyMention(
+  prompt: string,
+  caret: number,
+  m: CanvasMaterial,
+  mentionMaterials: CanvasMaterial[],
+  refs: string[],
+  derivedRefs: string[],
+): Record<string, unknown> {
+  const before = prompt.slice(0, caret).replace(/@[^@\s]*$/, `@${m.name} `);
+  return {
+    prompt: before + prompt.slice(caret),
+    mentionMaterials: [...mentionMaterials.filter((x) => x.nodeId !== m.nodeId), m],
+    refs: m.category === 'Image' && !derivedRefs.includes(m.url) ? Array.from(new Set([...refs, m.url])) : refs,
+  };
+}
+
+const MATERIAL_KIND_LABEL: Record<string, string> = { Image: '图片', Video: '视频', Audio: '音频', Model: '3D' };
+
+function materialIcon(m: CanvasMaterial) {
+  if (m.sourceType === 'material') return <AppstoreOutlined />;
+  if (m.category === 'Image') return <PictureOutlined />;
+  if (m.category === 'Video') return <VideoCameraOutlined />;
+  return <CustomerServiceOutlined />;
+}
+
+// @ 候选菜单(生成栏和展开大窗共用)
+function MentionMenu({
+  query,
+  materials,
+  className,
+  onPick,
+}: {
+  query: string;
+  materials: CanvasMaterial[];
+  className?: string;
+  onPick: (m: CanvasMaterial) => void;
+}) {
+  const hits = materials.filter((m) => !query || m.name.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <div className={`material-mention-menu${className ? ` ${className}` : ''}`}>
+      {hits.slice(0, 8).map((m) => (
+        <button key={m.nodeId} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(m)}>
+          {materialIcon(m)}
+          <span>{m.name}</span>
+          <small>{m.sourceType === 'material' ? '素材' : MATERIAL_KIND_LABEL[m.category] || m.category}</small>
+        </button>
+      ))}
+      {hits.length === 0 && <div className="material-mention-empty">没有匹配的已连接输入</div>}
+    </div>
+  );
+}
+
 // ============ composer 生成栏(独立组件,useViewport 跟随选中节点,不随视口重渲染整棵画布) ============
 function Composer({
   anchor,
@@ -1390,11 +1797,14 @@ function Composer({
   derivedRefs,
   derivedAudio,
   derivedVideo,
+  derivedModel3d,
   upstreamPrompt,
   onPatch,
   onRun,
   onAddRef,
   materials,
+  onExpandPrompt,
+  onAddPrompt,
 }: {
   anchor: RFNode | null;
   modelsByType: ModelsByType;
@@ -1402,20 +1812,34 @@ function Composer({
   derivedRefs: string[];
   derivedAudio: string[];
   derivedVideo: string[];
+  derivedModel3d: string[];
   upstreamPrompt: string;
   onPatch: (patch: Record<string, unknown>) => void;
   onRun: () => void;
   onAddRef: (file: File) => void;
   materials: CanvasMaterial[];
+  onExpandPrompt: () => void;
+  onAddPrompt: () => void;
 }) {
   const vp = useViewport();
   const refInput = useRef<HTMLInputElement>(null);
   const promptSelection = useRef({ start: 0, end: 0 });
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const audioEl = useRef<HTMLAudioElement>(null);
+  const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  const anchorId = anchor?.id;
+  // 换选中节点时停掉正在试听的音频,免得声音跟着跑到别的节点上
+  useEffect(() => {
+    audioEl.current?.pause();
+    setPlayingAudio(null);
+  }, [anchorId]);
   if (!anchor) return <div className="composer" />;
 
   const d = anchor.data || {};
-  const cap = capById(d.kind); // 当前能力(注册表驱动)
+  const cap = capById(d.kind);
+  const activeGroup = composerGroupFor(cap.id);
   const models = modelsForCap(cap, modelsByType);
   const w = anchor.width || 240;
   const h = anchor.height || 160;
@@ -1423,11 +1847,92 @@ function Composer({
   const top = (anchor.position.y + h) * vp.zoom + vp.y + 14;
 
   const manualRefs: string[] = d.refs || [];
+  // 上游连线已经带进来的图不再重复展示一遍(老文档里 @素材 可能已写进 refs),
+  // 展示顺序与真正下发的参考图顺序(derived 在前、manual 去重在后)保持一致。
+  const extraRefs = manualRefs
+    .map((url, index) => ({ url, index }))
+    .filter((it) => !derivedRefs.includes(it.url));
   const paramDefs = cap.params(d, models);
   const n: number = d.count || 1;
-  const noThumbs = derivedRefs.length + manualRefs.length === 0;
   const refRoles = cap.id === 'tryon' ? tryOnRoles(d) : [];
-  const populatedRefCount = derivedRefs.length + manualRefs.length;
+  const populatedRefCount = derivedRefs.length + extraRefs.length;
+  // 图片 / 视频 / 音频共用一条缩略图,视频音频不再各自占一整行。
+  // 节点自身的视频/音频结果在节点卡片上已经能看能播,这里只展示上游连进来的,不重复占位。
+  const upstreamVideo = derivedVideo.filter((u) => u !== d.videoUrl);
+  const upstreamAudio = derivedAudio.filter((u) => u !== d.audioUrl);
+  // 3D→3D 操作的输入模型:节点自身的模型在卡片上已经能看,这里只显示上游连进来的。
+  const upstreamModel3d = cap.output === 'model3d' ? derivedModel3d.filter((u) => u !== d.model3dUrl) : [];
+  const refsHintText = typeof cap.refsHint === 'function' ? cap.refsHint(d) : cap.refsHint;
+  const threeDNeedsModel = cap.output === 'model3d' && THREED_NEEDS_MODEL.includes(threeDOpOf(d.model));
+  const noImageThumb = populatedRefCount === 0;
+  const noThumbs = noImageThumb && upstreamVideo.length + upstreamAudio.length + upstreamModel3d.length === 0 && !cap.usesAudio;
+  const showThumbRow = cap.usesRefs || cap.usesAudio || upstreamAudio.length > 0 || upstreamVideo.length > 0 || upstreamModel3d.length > 0;
+
+  // 输入缩略图合成一条可拖拽排序的列表。顺序是有语义的(首帧、换装的模特/上衣/下装、
+  // 多帧关键帧次序),所以拖完写回 data.inputOrder,runGenerator 用同一个 applyInputOrder 下发。
+  type ThumbItem = { url: string; kind: 'image' | 'video' | 'audio' | 'model3d'; manualIndex?: number };
+  const baseThumbs: ThumbItem[] = [
+    ...(cap.usesRefs ? derivedRefs.map((url) => ({ url, kind: 'image' as const })) : []),
+    ...(cap.usesRefs ? extraRefs.map((r) => ({ url: r.url, kind: 'image' as const, manualIndex: r.index })) : []),
+    ...upstreamVideo.map((url) => ({ url, kind: 'video' as const })),
+    ...upstreamAudio.map((url) => ({ url, kind: 'audio' as const })),
+    ...upstreamModel3d.map((url) => ({ url, kind: 'model3d' as const })),
+  ];
+  const thumbs = applyInputOrder(baseThumbs, d.inputOrder as string[], (it) => it.url);
+  // 换装的「模特图 / 上衣图」角标跟位置走,不跟图走:拖到第一位的那张就是模特图。
+  const thumbRoles = new Map<string, string>();
+  let imageSeq = 0;
+  for (const it of thumbs) {
+    if (it.kind !== 'image') continue;
+    if (refRoles[imageSeq]) thumbRoles.set(it.url, refRoles[imageSeq]);
+    imageSeq += 1;
+  }
+  const moveThumb = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    const urls = thumbs.map((t) => t.url);
+    const [moved] = urls.splice(from, 1);
+    urls.splice(to, 0, moved);
+    onPatch({ inputOrder: urls });
+  };
+  // 拖拽 props 直接挂在缩略块本身,不额外包一层容器(包一层会破坏这行的 flex 布局)
+  const dragProps = (i: number) => ({
+    draggable: thumbs.length > 1,
+    'data-drag': dragFrom === i ? 'src' : dragOver === i ? 'over' : undefined,
+    onDragStart: (e: ReactDragEvent) => {
+      setDragFrom(i);
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(i)); // Firefox 不 setData 不会启动拖拽
+    },
+    onDragOver: (e: ReactDragEvent) => {
+      if (dragFrom === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragOver !== i) setDragOver(i);
+    },
+    onDrop: (e: ReactDragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dragFrom !== null) moveThumb(dragFrom, i);
+      setDragFrom(null);
+      setDragOver(null);
+    },
+    onDragEnd: () => {
+      setDragFrom(null);
+      setDragOver(null);
+    },
+  });
+  const toggleAudio = (url: string) => {
+    const el = audioEl.current;
+    if (!el) return;
+    if (playingAudio === url) {
+      el.pause();
+      setPlayingAudio(null);
+      return;
+    }
+    el.src = url;
+    el.currentTime = 0;
+    el.play().then(() => setPlayingAudio(url)).catch(() => setPlayingAudio(null));
+  };
   const emotionRanges = (d.emotionRanges || []) as EmotionRange[];
   const emotionChunks = cap.id === 'audio' && emotionRanges.length ? buildEmotionChunks(d.prompt || '', emotionRanges) : [];
 
@@ -1437,15 +1942,13 @@ function Composer({
         <div className="composer-head">
           <div className="composer-head-left">
             <div className="kind-toggle">
-              {CAPABILITIES.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={cap.id === c.id ? 'active' : ''}
-                  onClick={() => onPatch(capDefault(c, modelsForCap(c, modelsByType)))}
-                >
-                  {c.icon}
-                  <span>{c.label}</span>
+              {COMPOSER_GROUPS.map((group) => (
+                <button key={group.id} type="button" className={activeGroup.id === group.id ? 'active' : ''} onClick={() => {
+                  if (group.id === 'prompt') return onAddPrompt();
+                  const next = capById(group.caps[0]);
+                  onPatch(capDefault(next, modelsForCap(next, modelsByType)));
+                }}>
+                  {group.icon}<span>{group.label}</span>
                 </button>
               ))}
             </div>
@@ -1453,76 +1956,137 @@ function Composer({
           <span className="composer-head-hint">模桥</span>
         </div>
 
-        {cap.usesRefs && (
+        {showThumbRow && (
           <div className="input-thumbs-row has-items">
             <div className={`input-thumb-list${noThumbs ? ' empty' : ''}`}>
-              {derivedRefs.map((u, i) => (
-                <div className="input-thumb input-self" key={`d${i}`} title="来自节点自身 / 上游">
-                  <img src={u} alt="" />
-                  {refRoles[i] && <span className="input-thumb-role">{refRoles[i]}</span>}
-                </div>
-              ))}
-              {manualRefs.map((u, i) => (
-                <div className="input-thumb" key={`m${i}`}>
-                  <img src={u} alt="" />
-                  {refRoles[derivedRefs.length + i] && <span className="input-thumb-role">{refRoles[derivedRefs.length + i]}</span>}
-                  <button
-                    className="input-thumb-remove"
-                    title="移除参考图"
-                    onClick={() => onPatch({ refs: manualRefs.filter((_, j) => j !== i) })}
+              {/* 图片 / 视频 / 音频 / 3D 模型混在一条,拖动可改顺序(顺序决定首帧、换装角色等语义) */}
+              {thumbs.map((it, i) =>
+                it.kind === 'image' ? (
+                  <div
+                    className={`input-thumb${it.manualIndex === undefined ? ' input-self' : ''}`}
+                    key={`i${it.url}`}
+                    title={`${it.manualIndex === undefined ? '来自节点自身 / 上游' : '手动添加'}${thumbs.length > 1 ? '(可拖动排序)' : ''}`}
+                    {...dragProps(i)}
                   >
-                    ×
+                    <img src={it.url} alt="" draggable={false} />
+                    {thumbRoles.get(it.url) && <span className="input-thumb-role">{thumbRoles.get(it.url)}</span>}
+                    {it.manualIndex !== undefined && (
+                      <button
+                        className="input-thumb-remove"
+                        title="移除参考图"
+                        onClick={() => onPatch({ refs: manualRefs.filter((_, j) => j !== it.manualIndex) })}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ) : it.kind === 'video' ? (
+                  /* 参考视频:同样走缩略图,悬停播放首几秒,不再单独占一整行 */
+                  <div
+                    className="input-thumb input-self thumb-media"
+                    key={`v${it.url}`}
+                    title={`参考视频(悬停预览${thumbs.length > 1 ? ',可拖动排序' : ''})`}
+                    onMouseEnter={(e) => {
+                      const v = e.currentTarget.querySelector('video');
+                      if (v) v.play().catch(() => undefined);
+                    }}
+                    onMouseLeave={(e) => {
+                      const v = e.currentTarget.querySelector('video');
+                      if (v) {
+                        v.pause();
+                        v.currentTime = 0;
+                      }
+                    }}
+                    {...dragProps(i)}
+                  >
+                    <video src={`${it.url}#t=0.1`} muted loop playsInline preload="metadata" draggable={false} />
+                    <span className="input-thumb-tag">
+                      <VideoCameraOutlined />
+                    </span>
+                  </div>
+                ) : it.kind === 'audio' ? (
+                  /* 音频没有画面,整块就是一个麦克风按钮:点一下试听(图标变跳动音波),再点停 */
+                  <button
+                    type="button"
+                    className={`input-thumb input-self thumb-media thumb-audio${playingAudio === it.url ? ' playing' : ''}`}
+                    key={`a${it.url}`}
+                    title={`${cap.usesAudio ? '驱动' : '参考'}音频(点击${playingAudio === it.url ? '停止' : '试听'}${thumbs.length > 1 ? ',可拖动排序' : ''})`}
+                    onClick={() => toggleAudio(it.url)}
+                    {...dragProps(i)}
+                  >
+                    {playingAudio === it.url ? (
+                      <span className="audio-wave" aria-label="播放中">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    ) : (
+                      <AudioOutlined />
+                    )}
                   </button>
+                ) : (
+                  /* 3D→3D 的输入模型:纹理/减面/绑骨蒙皮等以它为主入参 */
+                  <div
+                    className="input-thumb input-self thumb-media thumb-model3d"
+                    key={`m${it.url}`}
+                    title={`输入 3D 模型 ${threeDModelType(it.url) || ''}`}
+                    {...dragProps(i)}
+                  >
+                    <ExperimentOutlined />
+                    <span className="input-thumb-tag">{threeDModelType(it.url) || '3D'}</span>
+                  </div>
+                ),
+              )}
+              {cap.usesAudio && upstreamAudio.length === 0 && (
+                <div className="input-thumb-slot" title={cap.audioHint || '上游连一个音频/TTS 节点作驱动音频'}>
+                  <AudioOutlined />
+                  <span>驱动音频</span>
                 </div>
-              ))}
-              {refRoles.slice(populatedRefCount).map((role) => (
+              )}
+              {threeDNeedsModel && upstreamModel3d.length === 0 && (
+                <div className="input-thumb-slot" title={refsHintText}>
+                  <ExperimentOutlined />
+                  <span>输入模型</span>
+                </div>
+              )}
+              {cap.usesRefs && refRoles.slice(populatedRefCount).map((role) => (
                 <button className="input-role-slot" type="button" key={role} onClick={() => refInput.current?.click()}>
                   <PlusOutlined />
                   <span>{role}</span>
                 </button>
               ))}
-              {noThumbs && refRoles.length === 0 && (
+              {cap.usesRefs && noImageThumb && refRoles.length === 0 && (
                 <span className="input-thumb-count">
-                  {derivedVideo.length
-                    ? '已使用参考视频，可继续添加图片参考'
-                    : cap.refsHint || (cap.output === 'video' ? '连接/加图片作首帧(可空,纯文生视频)' : '连接素材或点右侧＋加参考图')}
+                  {refsHintText
+                    || (upstreamVideo.length || upstreamAudio.length
+                      ? '可继续加图片参考'
+                      : cap.output === 'video'
+                        ? '连接/加图片作首帧(可空,纯文生视频)'
+                        : '连接素材或点右侧＋加参考图')}
                 </span>
               )}
             </div>
-            <div className="input-thumb-actions">
-              <button className="input-thumb-add" title="添加参考图" onClick={() => refInput.current?.click()}>
-                <PlusOutlined />
-              </button>
-            </div>
-            <input
-              ref={refInput}
-              type="file"
-              accept="image/*"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onAddRef(f);
-                e.currentTarget.value = '';
-              }}
-            />
-          </div>
-        )}
-
-        {(cap.usesAudio || derivedAudio.length > 0) && (
-          <div className={`audio-input-row${derivedAudio.length ? ' has-audio' : ''}`}>
-            <CustomerServiceOutlined />
-            <span>
-              {derivedAudio.length
-                ? `已连接${cap.usesAudio ? '驱动' : '参考'}音频 ×${derivedAudio.length}`
-                : cap.audioHint || '上游连一个音频/TTS 节点作驱动音频'}
-            </span>
-          </div>
-        )}
-
-        {derivedVideo.length > 0 && (
-          <div className="audio-input-row video-reference-row has-audio">
-            <VideoCameraOutlined />
-            <span>已连接参考视频 ×{derivedVideo.length}</span>
+            <audio ref={audioEl} style={{ display: 'none' }} onEnded={() => setPlayingAudio(null)} />
+            {cap.usesRefs && (
+              <>
+                <div className="input-thumb-actions">
+                  <button className="input-thumb-add" title="添加参考图" onClick={() => refInput.current?.click()}>
+                    <PlusOutlined />
+                  </button>
+                </div>
+                <input
+                  ref={refInput}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onAddRef(f);
+                    e.currentTarget.value = '';
+                  }}
+                />
+              </>
+            )}
           </div>
         )}
 
@@ -1535,15 +2099,41 @@ function Composer({
 
         {cap.usesPrompt !== false && (
         <div className="prompt-row">
+          <div className="prompt-tools">
+            {!!String(d.prompt || '').length && <span className="prompt-count">{String(d.prompt).length} 字</span>}
+            {cap.stylePresets && (
+              <div className="smart-control composer-template">
+                <button className="composer-template-btn" type="button" title="风格预设">
+                  <BulbOutlined />
+                </button>
+                <div className="smart-popover template-popover">
+                  <div className="smart-popover-title">风格预设(追加到提示词)</div>
+                  <div className="template-grid">
+                    {STYLE_PRESETS.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => onPatch({ prompt: (d.prompt ? `${d.prompt}，` : '') + `${s}风格` })}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <button className="prompt-expand-btn" type="button" title="展开成大窗口编辑" onClick={onExpandPrompt}>
+              <FullscreenOutlined />
+              <span>展开</span>
+            </button>
+          </div>
           <textarea
             className="prompt-input"
             value={d.prompt || ''}
             onChange={(e) => {
               const value = e.target.value;
               promptSelection.current = { start: e.target.selectionStart, end: e.target.selectionEnd };
-              const before = value.slice(0, e.target.selectionStart);
-              const match = before.match(/@([^@\s]*)$/);
-              setMentionQuery(match ? match[1] : null);
+              setMentionQuery(mentionQueryAt(value, e.target.selectionStart));
               onPatch({ prompt: value, ...(cap.id === 'audio' ? { emotionRanges: [] } : {}) });
             }}
             onSelect={(e) => {
@@ -1552,55 +2142,24 @@ function Composer({
             placeholder={cap.promptPlaceholder}
           />
           {mentionQuery !== null && (
-            <div className="material-mention-menu">
-              {materials
-                .filter((m) => !mentionQuery || m.name.toLowerCase().includes(mentionQuery.toLowerCase()))
-                .slice(0, 8)
-                .map((m) => (
-                  <button
-                    key={m.nodeId}
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      const value = String(d.prompt || '');
-                      const caret = promptSelection.current.end || value.length;
-                      const before = value.slice(0, caret).replace(/@[^@\s]*$/, `@${m.name} `);
-                      const existing = ((d.mentionMaterials || []) as CanvasMaterial[]).filter((x) => x.nodeId !== m.nodeId);
-                      const refs = m.category === 'Image' ? Array.from(new Set([...(d.refs || []), m.url])) : d.refs || [];
-                      onPatch({ prompt: before + value.slice(caret), mentionMaterials: [...existing, m], refs });
-                      setMentionQuery(null);
-                    }}
-                  >
-                    {m.sourceType === 'material' ? <AppstoreOutlined /> : m.category === 'Image' ? <PictureOutlined /> : m.category === 'Video' ? <VideoCameraOutlined /> : <CustomerServiceOutlined />}
-                    <span>{m.name}</span>
-                    <small>{m.sourceType === 'material' ? '素材' : m.category === 'Image' ? '图片' : m.category === 'Video' ? '视频' : m.category === 'Audio' ? '音频' : '3D'}</small>
-                  </button>
-                ))}
-              {!materials.some((m) => !mentionQuery || m.name.toLowerCase().includes(mentionQuery.toLowerCase())) && (
-                <div className="material-mention-empty">没有匹配的已连接输入</div>
-              )}
-            </div>
-          )}
-          {cap.stylePresets && (
-            <div className="smart-control composer-template">
-              <button className="composer-template-btn" type="button" title="风格预设">
-                <BulbOutlined />
-              </button>
-              <div className="smart-popover template-popover">
-                <div className="smart-popover-title">风格预设(追加到提示词)</div>
-                <div className="template-grid">
-                  {STYLE_PRESETS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => onPatch({ prompt: (d.prompt ? `${d.prompt}，` : '') + `${s}风格` })}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            <MentionMenu
+              query={mentionQuery}
+              materials={materials}
+              onPick={(m) => {
+                const value = String(d.prompt || '');
+                onPatch(
+                  applyMention(
+                    value,
+                    promptSelection.current.end || value.length,
+                    m,
+                    (d.mentionMaterials || []) as CanvasMaterial[],
+                    (d.refs || []) as string[],
+                    derivedRefs,
+                  ),
+                );
+                setMentionQuery(null);
+              }}
+            />
           )}
         </div>
         )}
@@ -1617,6 +2176,18 @@ function Composer({
 
         <div className="param-row">
           <div className="dynamic-params">
+            {activeGroup.caps.length > 1 && (
+              <PillSelect
+                icon={activeGroup.icon}
+                typeLabel="能力"
+                value={cap.id}
+                options={activeGroup.caps.map((id) => ({ value: id, label: capById(id).label }))}
+                onChange={(id) => {
+                  const next = capById(id);
+                  onPatch(capDefault(next, modelsForCap(next, modelsByType)));
+                }}
+              />
+            )}
             <PillSelect
               icon={<AppstoreOutlined />}
               typeLabel="模型"
@@ -1656,7 +2227,102 @@ function Composer({
         <div className="composer-actions">
           <button className="run-btn" disabled={running} onClick={onRun}>
             <ThunderboltOutlined />
-            {running ? '生成中' : '运行'}
+            {running ? '生成中' : d.isResult ? '重新运行' : '运行'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============ 提示词展开大窗(视频类提示词很长,小框里不好写) ============
+function PromptModal({
+  capLabel,
+  placeholder,
+  isAudio,
+  prompt,
+  mentionMaterials,
+  refs,
+  derivedRefs,
+  materials,
+  onPatch,
+  onClose,
+}: {
+  capLabel: string;
+  placeholder?: string;
+  isAudio: boolean;
+  prompt: string;
+  mentionMaterials: CanvasMaterial[];
+  refs: string[];
+  derivedRefs: string[];
+  materials: CanvasMaterial[];
+  onPatch: (patch: Record<string, unknown>) => void;
+  onClose: () => void;
+}) {
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const caretRef = useRef(prompt.length);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!area) return;
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (mentionQuery !== null) setMentionQuery(null);
+      else onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mentionQuery, onClose]);
+
+  return (
+    <div className="prompt-modal" onMouseDown={onClose}>
+      <div className="prompt-modal-card" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="prompt-modal-head">
+          <span className="prompt-modal-title">提示词 · {capLabel}</span>
+          <span className="prompt-modal-count">{prompt.length} 字</span>
+          <button className="prompt-modal-close" type="button" title="收起 (Esc)" onClick={onClose}>
+            <FullscreenExitOutlined />
+          </button>
+        </div>
+        <div className="prompt-modal-body">
+          <textarea
+            ref={areaRef}
+            className="prompt-modal-input"
+            value={prompt}
+            onChange={(e) => {
+              const value = e.target.value;
+              caretRef.current = e.target.selectionStart;
+              setMentionQuery(mentionQueryAt(value, e.target.selectionStart));
+              onPatch({ prompt: value, ...(isAudio ? { emotionRanges: [] } : {}) });
+            }}
+            onSelect={(e) => {
+              caretRef.current = e.currentTarget.selectionEnd;
+            }}
+            placeholder={placeholder}
+          />
+          {mentionQuery !== null && (
+            <MentionMenu
+              query={mentionQuery}
+              materials={materials}
+              className="in-modal"
+              onPick={(m) => {
+                onPatch(applyMention(prompt, caretRef.current || prompt.length, m, mentionMaterials, refs, derivedRefs));
+                setMentionQuery(null);
+                areaRef.current?.focus();
+              }}
+            />
+          )}
+        </div>
+        <div className="prompt-modal-foot">
+          <span>输入 @ 可引用已连接的素材 / 图片 / 视频 · 编辑实时保存</span>
+          <button className="prompt-modal-done" type="button" onClick={onClose}>
+            完成
           </button>
         </div>
       </div>
@@ -1665,11 +2331,21 @@ function Composer({
 }
 
 type DocMeta = { id: number; title: string; icon: string };
-type MenuState = { x: number; y: number; source?: string | null };
+type MenuState = {
+  x: number;
+  y: number;
+  spawnX?: number;
+  spawnY?: number;
+  source?: string | null;
+  target?: string | null;
+  side?: 'left' | 'right';
+  mode?: 'commands' | 'create';
+};
+type GraphSnapshot = { nodes: RFNode[]; edges: RFEdge[] };
 type MediaMenuState = { x: number; y: number; nodeId: string };
 
 function CanvasInner() {
-  const { apiKey } = usePlaygroundApiKey();
+  const { apiKey, setApiKey } = usePlaygroundApiKey();
   const rf = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -1678,23 +2354,45 @@ function CanvasInner() {
   const [docId, setDocId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [runState, setRunState] = useState<Record<string, RunInfo>>({});
+  const [connecting, setConnecting] = useState(false);
   const [saveHint, setSaveHint] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [, setHistoryTick] = useState(0);
   const [mediaMenu, setMediaMenu] = useState<MediaMenuState | null>(null);
   const [materialLibraryOpen, setMaterialLibraryOpen] = useState(false);
   const [storedMaterials, setStoredMaterials] = useState<StoredCanvasMaterial[]>([]);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [preview, setPreview] = useState<{ images: string[]; index: number } | null>(null);
+  // 记节点 id 而不是布尔:切走选中节点时大窗自动关掉,不会串到别的节点上
+  const [promptExpanded, setPromptExpanded] = useState<string | null>(null);
   const [liveSeed, setLiveSeed] = useState<DhLiveSeed | null>(null);
   const [liveVoices, setLiveVoices] = useState<LiveVoice[]>([]);
   const [loadTick, setLoadTick] = useState(0); // 文档载入完成计数,触发续轮询扫描
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [keyPanelOpen, setKeyPanelOpen] = useState(false);
+  const [keyDraft, setKeyDraft] = useState('');
+  const [fabOpen, setFabOpen] = useState(false);
+  const [canvasPanelOpen, setCanvasPanelOpen] = useState(false);
+  const [fabPos, setFabPos] = useState({ x: 24, y: 260 });
+  const [fabDocked, setFabDocked] = useState<'left' | 'right' | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatModel, setChatModel] = useState('');
+  const [chatSending, setChatSending] = useState(false);
+  const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  const contextUploadRef = useRef<HTMLInputElement>(null);
+  const contextSpawnRef = useRef({ x: 0, y: 0 });
+  const historyRef = useRef<GraphSnapshot[]>([]);
+  const historyIndexRef = useRef(-1);
+  const applyingHistoryRef = useRef(false);
+  const activeDownloadsRef = useRef(new Set<string>());
   const loadingRef = useRef(true);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const connectingRef = useRef<string | null>(null);
+  const fabDragRef = useRef<{ pointerId: number; sx: number; sy: number; ox: number; oy: number; x: number; y: number; moved: boolean } | null>(null);
   const pollRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   useEffect(() => {
     nodesRef.current = nodes;
@@ -1702,6 +2400,24 @@ function CanvasInner() {
   useEffect(() => {
     edgesRef.current = edges;
   }, [edges]);
+
+  // 画布历史忽略 selected / measured 等 ReactFlow 运行态，只记录可持久化的业务图。
+  useEffect(() => {
+    if (loadingRef.current || applyingHistoryRef.current) return undefined;
+    const t = setTimeout(() => {
+      const snapshot: GraphSnapshot = {
+        nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data } as RFNode)),
+        edges: edges.map(({ id, source, target, sourceHandle, targetHandle, data }) => ({ id, source, target, sourceHandle, targetHandle, data } as RFEdge)),
+      };
+      const signature = JSON.stringify(snapshot);
+      const current = historyRef.current[historyIndexRef.current];
+      if (current && JSON.stringify(current) === signature) return;
+      historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1).concat(snapshot).slice(-60);
+      historyIndexRef.current = historyRef.current.length - 1;
+      setHistoryTick((n) => n + 1);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [nodes, edges, loadTick]);
   useEffect(
     () => () => {
       Object.values(pollRef.current).forEach((t) => clearTimeout(t));
@@ -1714,6 +2430,44 @@ function CanvasInner() {
     document.addEventListener('fullscreenchange', syncFullscreen);
     return () => document.removeEventListener('fullscreenchange', syncFullscreen);
   }, []);
+
+  // 全屏期间浏览器只渲染 .cs-root 子树,挂在 body 上的 toast 会看不见(生成失败提示也在里面),
+  // 所以把 message 容器临时改挂到画布根节点上,退出全屏再还回 body。
+  useEffect(() => {
+    message.config({ getContainer: () => (isFullscreen && rootRef.current) || document.body });
+    return () => message.config({ getContainer: () => document.body });
+  }, [isFullscreen]);
+
+  // 换 key / 退出:画布是整页铺满(还能全屏)的,没有这个入口就只能切到别的 Tab 才能改 key。
+  // 切 key 前先停掉自动保存和轮询 —— 旧文档属于旧 key,拿新 key 去 PUT 只会 404。
+  const quitCurrentDoc = useCallback(() => {
+    loadingRef.current = true;
+    Object.values(pollRef.current).forEach((t) => clearTimeout(t));
+    pollRef.current = {};
+    setDocId(null);
+    setDocs([]);
+    setNodes([]);
+    setEdges([]);
+    setRunState({});
+    setKeyPanelOpen(false);
+  }, [setNodes, setEdges]);
+
+  const switchKey = useCallback(() => {
+    const next = keyDraft.trim();
+    if (!next) return void message.warning('先填入新的 API Key');
+    if (next === apiKey) return void setKeyPanelOpen(false);
+    quitCurrentDoc();
+    setApiKey(next); // apiKey 变化会重新拉画布列表并打开第一张
+    setKeyDraft('');
+    message.success('已切换密钥');
+  }, [keyDraft, apiKey, quitCurrentDoc, setApiKey]);
+
+  const signOutKey = useCallback(async () => {
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+    quitCurrentDoc();
+    setKeyDraft('');
+    setApiKey(''); // 清空后回到「填入 API Key 使用画布」
+  }, [quitCurrentDoc, setApiKey]);
 
   const toggleFullscreen = useCallback(async () => {
     try {
@@ -1732,6 +2486,32 @@ function CanvasInner() {
       }),
     [apiKey],
   );
+
+  const sendCanvasChat = useCallback(async () => {
+    const content = chatDraft.trim();
+    const model = chatModel || modelsByType.chat?.[0]?.value;
+    if (!content || chatSending) return;
+    if (!model) return void message.warning('没有可用的对话模型');
+    const nextMessages = [...chatMessages, { role: 'user' as const, content }];
+    setChatMessages(nextMessages);
+    setChatDraft('');
+    setChatSending(true);
+    try {
+      const r = await authFetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages: nextMessages, stream: false }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error?.message || body?.message || `HTTP ${r.status}`);
+      const answer = body?.choices?.[0]?.message?.content || '';
+      setChatMessages((items) => [...items, { role: 'assistant', content: answer || '未返回内容' }]);
+    } catch (err: any) {
+      message.error(`对话失败：${err?.message || String(err)}`);
+    } finally {
+      setChatSending(false);
+    }
+  }, [chatDraft, chatModel, chatMessages, chatSending, modelsByType.chat, authFetch]);
 
   useEffect(() => {
     systemApi.models().then((res) => {
@@ -1799,6 +2579,8 @@ function CanvasInner() {
             }
           : nd,
       );
+      historyRef.current = [];
+      historyIndexRef.current = -1;
       setNodes(markedNodes);
       setEdges(loadedEdges);
       setTitle(row.title || '');
@@ -1825,6 +2607,50 @@ function CanvasInner() {
     await loadList();
     if (id) await openDoc(id);
   }, [authFetch, loadList, openDoc]);
+
+  // 删除当前画布(后端软删)。已上传/生成的素材归 user 不归画布,不跟着删,
+  // 别的画布里引用同一批素材的节点不受影响。
+  const deleteDoc = useCallback(() => {
+    if (!docId) return;
+    const id = docId;
+    const cur = docs.find((d) => d.id === id);
+    Modal.confirm({
+      title: '删除这个画布?',
+      content: `「${cur?.title || '未命名画布'}」的节点和连线会一起删除,已生成的素材保留在素材库里。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      // 全屏时浏览器只渲染 .cs-root 子树,挂到 body 的弹窗会整个看不见
+      getContainer: () => rootRef.current || document.body,
+      onOk: async () => {
+        // 先掐掉自动保存和轮询:否则删完这一拍的防抖保存会 PUT 回一个已删的文档
+        loadingRef.current = true;
+        Object.values(pollRef.current).forEach((t) => clearTimeout(t));
+        pollRef.current = {};
+        try {
+          const r = await authFetch(`/v1/canvas/documents/${id}`, { method: 'DELETE' });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({}) as any);
+            throw new Error(j?.message || `HTTP ${r.status}`);
+          }
+        } catch (e: any) {
+          loadingRef.current = false;
+          message.error(e?.message || '删除失败');
+          return;
+        }
+        setDocId(null);
+        try {
+          const list = await loadList();
+          const next = list.find((d) => d.id !== id);
+          if (next) await openDoc(next.id); // 切到剩下的第一个
+          else await createDoc(); // 一个都不剩:直接开一张空画布,不留白屏
+        } catch {
+          loadingRef.current = false;
+        }
+        message.success('画布已删除');
+      },
+    });
+  }, [docId, docs, authFetch, loadList, openDoc, createDoc]);
 
   useEffect(() => {
     if (!apiKey) return;
@@ -1858,6 +2684,49 @@ function CanvasInner() {
     return () => clearTimeout(t);
   }, [nodes, edges, title, docId, authFetch, rf]);
 
+  const onFabPointerDown = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    fabDragRef.current = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, ox: fabPos.x, oy: fabPos.y, x: fabPos.x, y: fabPos.y, moved: false };
+    setFabDocked(null);
+  }, [fabPos]);
+  const onFabPointerMove = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    const root = rootRef.current;
+    if (!drag || drag.pointerId !== e.pointerId || !root) return;
+    const dx = e.clientX - drag.sx;
+    const dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) {
+      drag.moved = true;
+      setFabOpen(false);
+      setCanvasPanelOpen(false);
+    }
+    if (!drag.moved) return;
+    const rect = root.getBoundingClientRect();
+    drag.x = Math.max(0, Math.min(drag.ox + dx, rect.width - 56));
+    drag.y = Math.max(8, Math.min(drag.oy + dy, rect.height - 64));
+    setFabPos({ x: drag.x, y: drag.y });
+  }, []);
+  const onFabPointerUp = useCallback((e: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = fabDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    fabDragRef.current = null;
+    if (!drag.moved) {
+      setCanvasPanelOpen(false);
+      setFabOpen((v) => !v);
+      return;
+    }
+    const width = rootRef.current?.getBoundingClientRect().width || 0;
+    if (drag.x <= 42) {
+      setFabDocked('left');
+      setFabPos({ x: -8, y: drag.y });
+    } else if (width && drag.x >= width - 98) {
+      setFabDocked('right');
+      setFabPos({ x: width - 48, y: drag.y });
+    }
+  }, []);
+
   const onConnect = useCallback((c: Connection) => setEdges((eds) => addEdge(c, eds)), [setEdges]);
   const updateNodeData = useCallback(
     (id: string, patch: Record<string, unknown>) =>
@@ -1868,6 +2737,23 @@ function CanvasInner() {
     (id: string) => setNodes((nds) => nds.map((nd) => ({ ...nd, selected: nd.id === id }))),
     [setNodes],
   );
+  const selectBatch = useCallback((id: string, index: number) => {
+    setNodes((nds) => nds.map((nd) => {
+      if (nd.id !== id) return nd;
+      const batches = (nd.data?.generationBatches || []) as GenerationBatch[];
+      const batch = batches[index];
+      if (!batch) return nd;
+      return {
+        ...nd,
+        data: {
+          ...nd.data,
+          ...outputSnapshot(batch.videoUrl ? 'video' : batch.audioUrl ? 'audio' : batch.model3dUrl ? 'model3d' : 'image',
+            batch.images || [batch.videoUrl || batch.audioUrl || batch.model3dUrl || ''].filter(Boolean)),
+          activeBatch: index,
+        },
+      };
+    }));
+  }, [setNodes]);
   const deleteNode = useCallback(
     (id: string) => {
       if (pollRef.current[id]) {
@@ -1894,7 +2780,7 @@ function CanvasInner() {
 
   // 新建节点(可选连线),新节点自动独占选中 → composer 立即浮现
   const spawnNode = useCallback(
-    (type: string, screenX: number, screenY: number, source: string | null, capabilityId?: string) => {
+    (type: string, screenX: number, screenY: number, source: string | null, capabilityId?: string, target?: string | null) => {
       const pos = rf.screenToFlowPosition({ x: screenX, y: screenY });
       const id = `${type}_${Date.now().toString(36)}`;
       const data =
@@ -1914,9 +2800,39 @@ function CanvasInner() {
         nds.map((nd) => ({ ...nd, selected: false })).concat({ id, type, position: pos, data, selected: true }),
       );
       if (source) setEdges((eds) => addEdge({ source, target: id } as Connection, eds));
+      if (target) setEdges((eds) => addEdge({ source: id, target } as Connection, eds));
+      return id;
     },
     [rf, modelsByType, setNodes, setEdges],
   );
+
+  const applyHistory = useCallback((offset: -1 | 1) => {
+    const nextIndex = historyIndexRef.current + offset;
+    const snapshot = historyRef.current[nextIndex];
+    if (!snapshot) return;
+    applyingHistoryRef.current = true;
+    historyIndexRef.current = nextIndex;
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    setHistoryTick((n) => n + 1);
+    requestAnimationFrame(() => { applyingHistoryRef.current = false; });
+    setMenu(null);
+  }, [setNodes, setEdges]);
+
+  const openNodeCreate = useCallback((id: string, side: 'left' | 'right', anchor: HTMLElement) => {
+    const nodeEl = anchor.closest('.react-flow__node') as HTMLElement | null;
+    const rect = nodeEl?.getBoundingClientRect() || anchor.getBoundingClientRect();
+    spawnNode(
+      'image',
+      side === 'right' ? rect.right + 150 : rect.left - 390,
+      rect.top + Math.min(rect.height / 2, 100),
+      side === 'right' ? id : null,
+      'image',
+      side === 'left' ? id : null,
+    );
+    setMenu(null);
+    setMediaMenu(null);
+  }, [spawnNode]);
 
   const addNodeCenter = useCallback(
     (type: string, capabilityId?: string) => {
@@ -1959,7 +2875,7 @@ function CanvasInner() {
   // 已登记素材优先，避免后接的普通图片抢占 first_frame_image。
   const refThumbsFor = useCallback((nodeId: string): string[] => {
     const self = nodesRef.current.find((nd) => nd.id === nodeId);
-    const own: string[] = self?.data?.images || [];
+    const own: string[] = self?.data?.taskInputs?.images || self?.data?.images || [];
     const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
     const cap = capById(self?.data?.kind);
     if (cap.combineRefs) {
@@ -1971,47 +2887,55 @@ function CanvasInner() {
       }
       return Array.from(new Set([...own, ...connected]));
     }
-    const registered: string[] = [];
     const up: string[] = [];
-    for (const nd of nodesRef.current) {
-      if (upIds.includes(nd.id) && nd.type === 'material' && nd.data?.srcUrl && nd.data?.assetType === 'Image') {
-        registered.push(String(nd.data.srcUrl));
-      }
-      if (upIds.includes(nd.id) && nd.type === 'image' && Array.isArray(nd.data?.images)) up.push(...nd.data.images);
+    // edges 的数组顺序就是接线建立顺序；每个源节点内部继续保持自身素材顺序。
+    for (const sourceId of upIds) {
+      const nd = nodesRef.current.find((candidate) => candidate.id === sourceId);
+      if (nd?.type === 'material' && nd.data?.srcUrl && nd.data?.assetType === 'Image') up.push(String(nd.data.srcUrl));
+      if (nd?.type === 'image' && Array.isArray(nd.data?.images)) up.push(...nd.data.images);
     }
     // 单主体能力(图片/视频/特效/3D/数智人):有自身图就只用自身,否则回退上游 —— 不把祖先图也当参考
-    return own.length ? Array.from(new Set(own)) : Array.from(new Set([...registered, ...up]));
+    return own.length ? Array.from(new Set(own)) : Array.from(new Set(up));
   }, []);
 
   // 腾讯云图等支持统一多媒体参考的 provider 使用完整 file_infos；素材登记节点的
   // AssetId 必须以 asset:// 传递，不能退化成普通图片 URL，否则真人素材身份会丢失。
   const fileInfosFor = useCallback((nodeId: string): Record<string, string>[] => {
-    const upIds = new Set(edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source));
+    const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
     const infos: Record<string, string>[] = [];
     let hasFirstFrame = false;
-    // 第一遍固定收登记素材，优先级不受节点创建顺序影响。
-    for (const nd of nodesRef.current) {
-      if (!upIds.has(nd.id) || nd.type !== 'material' || !nd.data?.assetId) continue;
-      const category = String(nd.data.assetType || 'Image');
-      const assetId = String(nd.data.assetId);
-      infos.push({
-        Type: 'Url', Category: category, Url: assetId.startsWith('asset://') ? assetId : `asset://${assetId}`,
-        Usage: category === 'Image' && !hasFirstFrame ? 'FirstFrame' : 'Reference',
-      });
-      if (category === 'Image') hasFirstFrame = true;
-    }
-    // 第二遍收节点自身和普通上游媒体；已登记素材已占首帧时，普通图片只作 Reference。
-    // 自身媒体很重要：选中一个已有视频结果再次运行，就是视频生视频。
-    for (const nd of nodesRef.current) {
-      if ((nd.id !== nodeId && !upIds.has(nd.id)) || nd.type === 'material') continue;
-      if (nd.type === 'image' && Array.isArray(nd.data?.images)) {
-        for (const url of nd.data.images) {
+    // 节点自身媒体在前；所有上游严格按入边建立顺序收集，不再按 nodes 顺序或素材类型重排。
+    const orderedNodes = [nodesRef.current.find((nd) => nd.id === nodeId), ...upIds.map((id) => nodesRef.current.find((nd) => nd.id === id))]
+      .filter(Boolean) as RFNode[];
+    for (const nd of orderedNodes) {
+      if (nd.type === 'material') {
+        if (!nd.data?.assetId) continue;
+        const category = String(nd.data.assetType || 'Image');
+        const assetId = String(nd.data.assetId);
+        infos.push({
+          Type: 'Url', Category: category, Url: assetId.startsWith('asset://') ? assetId : `asset://${assetId}`,
+          Usage: category === 'Image' && !hasFirstFrame ? 'FirstFrame' : 'Reference',
+        });
+        if (category === 'Image') hasFirstFrame = true;
+        continue;
+      }
+      const media = nd.id === nodeId && nd.data?.taskInputs ? nd.data.taskInputs : nd.data;
+      if (nd.type === 'image' && Array.isArray(media?.images)) {
+        for (const url of media.images) {
           infos.push({ Type: 'Url', Category: 'Image', Url: String(url), Usage: hasFirstFrame ? 'Reference' : 'FirstFrame' });
           hasFirstFrame = true;
         }
       }
-      if (nd.data?.audioUrl) infos.push({ Type: 'Url', Category: 'Audio', Url: String(nd.data.audioUrl), Usage: 'Reference' });
-      if (nd.data?.videoUrl) infos.push({ Type: 'Url', Category: 'Video', Url: String(nd.data.videoUrl), Usage: 'Reference' });
+      const album = (media?.mediaItems || []) as NodeMediaItem[];
+      if (album.length) {
+        for (const item of album) {
+          if (item.kind === 'image') continue;
+          infos.push({ Type: 'Url', Category: item.kind === 'video' ? 'Video' : item.kind === 'audio' ? 'Audio' : 'Model', Url: item.url, Usage: 'Reference' });
+        }
+      } else {
+        if (media?.audioUrl) infos.push({ Type: 'Url', Category: 'Audio', Url: String(media.audioUrl), Usage: 'Reference' });
+        if (media?.videoUrl) infos.push({ Type: 'Url', Category: 'Video', Url: String(media.videoUrl), Usage: 'Reference' });
+      }
     }
     const self = nodesRef.current.find((nd) => nd.id === nodeId);
     for (const material of ((self?.data?.mentionMaterials || []) as CanvasMaterial[])) {
@@ -2024,9 +2948,10 @@ function CanvasInner() {
 
   const upstreamPrompt = useCallback((nodeId: string): string => {
     const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
-    return nodesRef.current
-      .filter((nd) => upIds.includes(nd.id) && nd.type === 'prompt')
-      .map((nd) => nd.data?.text)
+    return upIds
+      .map((id) => nodesRef.current.find((nd) => nd.id === id))
+      .filter((nd) => nd?.type === 'prompt')
+      .map((nd) => nd?.data?.text)
       .filter(Boolean)
       .join('\n')
       .trim();
@@ -2035,11 +2960,17 @@ function CanvasInner() {
   // 驱动音频 = 节点自身 audioUrl + 上游节点 audioUrl(数智人用:上游接一个音频/TTS 节点)
   const audioRefsFor = useCallback((nodeId: string): string[] => {
     const self = nodesRef.current.find((nd) => nd.id === nodeId);
-    const own: string[] = self?.data?.audioUrl ? [self.data.audioUrl] : [];
+    const ownAudio = self?.data?.taskInputs ? self.data.taskInputs.audioUrl : self?.data?.audioUrl;
+    const ownAlbum = (self?.data?.taskInputs?.mediaItems || self?.data?.mediaItems || []) as NodeMediaItem[];
+    const own: string[] = ownAlbum.length ? ownAlbum.filter((m) => m.kind === 'audio').map((m) => m.url) : ownAudio ? [ownAudio] : [];
     const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
     const up: string[] = [];
-    for (const nd of nodesRef.current) {
-      if (upIds.includes(nd.id) && nd.data?.audioUrl) up.push(nd.data.audioUrl);
+    for (const sourceId of upIds) {
+      const nd = nodesRef.current.find((candidate) => candidate.id === sourceId);
+      if (!nd) continue;
+      const album = (nd.data?.mediaItems || []) as NodeMediaItem[];
+      if (album.length) up.push(...album.filter((m) => m.kind === 'audio').map((m) => m.url));
+      else if (nd.data?.audioUrl) up.push(nd.data.audioUrl);
     }
     return Array.from(new Set([...own, ...up]));
   }, []);
@@ -2048,19 +2979,44 @@ function CanvasInner() {
   // supports_reference_video 能力和 provider 在后端共同校验。
   const videoRefsFor = useCallback((nodeId: string): string[] => {
     const self = nodesRef.current.find((nd) => nd.id === nodeId);
-    const own: string[] = self?.data?.videoUrl ? [String(self.data.videoUrl)] : [];
-    const upIds = new Set(edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source));
-    const up = nodesRef.current
-      .filter((nd) => upIds.has(nd.id) && nd.data?.videoUrl)
-      .map((nd) => String(nd.data.videoUrl));
+    const ownVideo = self?.data?.taskInputs ? self.data.taskInputs.videoUrl : self?.data?.videoUrl;
+    const ownAlbum = (self?.data?.taskInputs?.mediaItems || self?.data?.mediaItems || []) as NodeMediaItem[];
+    const own: string[] = ownAlbum.length ? ownAlbum.filter((m) => m.kind === 'video').map((m) => m.url) : ownVideo ? [String(ownVideo)] : [];
+    const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
+    const up = upIds
+      .map((id) => nodesRef.current.find((nd) => nd.id === id))
+      .filter(Boolean)
+      .flatMap((nd) => {
+        const album = (nd?.data?.mediaItems || []) as NodeMediaItem[];
+        return album.length ? album.filter((m) => m.kind === 'video').map((m) => m.url) : nd?.data?.videoUrl ? [String(nd.data.videoUrl)] : [];
+      });
+    return Array.from(new Set([...own, ...up]));
+  }, []);
+
+  // 输入 3D 模型 = 节点自身 model3dUrl + 上游 3D 节点。3D→3D 操作(纹理/减面/绑骨蒙皮…)
+  // 的主入参就是它:既可以是上传节点拖进来的 .glb/.fbx,也可以是上一步生成出来的模型。
+  const model3dRefsFor = useCallback((nodeId: string): string[] => {
+    const self = nodesRef.current.find((nd) => nd.id === nodeId);
+    const ownModel = self?.data?.taskInputs ? self.data.taskInputs.model3dUrl : self?.data?.model3dUrl;
+    const ownAlbum = (self?.data?.taskInputs?.mediaItems || self?.data?.mediaItems || []) as NodeMediaItem[];
+    const own: string[] = ownAlbum.length ? ownAlbum.filter((m) => m.kind === 'model3d').map((m) => m.url) : ownModel ? [String(ownModel)] : [];
+    const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
+    const up = upIds
+      .map((id) => nodesRef.current.find((nd) => nd.id === id))
+      .filter(Boolean)
+      .flatMap((nd) => {
+        const album = (nd?.data?.mediaItems || []) as NodeMediaItem[];
+        return album.length ? album.filter((m) => m.kind === 'model3d').map((m) => m.url) : nd?.data?.model3dUrl ? [String(nd.data.model3dUrl)] : [];
+      });
     return Array.from(new Set([...own, ...up]));
   }, []);
 
   // 上游音色克隆节点的 voice_id(TTS 节点自动复用克隆音色);取最近一个 ready 的
   const cloneVoiceFor = useCallback((nodeId: string): string => {
     const upIds = edgesRef.current.filter((e) => e.target === nodeId).map((e) => e.source);
-    for (const nd of nodesRef.current) {
-      if (upIds.includes(nd.id) && nd.type === 'clone' && nd.data?.voiceId) return String(nd.data.voiceId);
+    for (const sourceId of upIds) {
+      const nd = nodesRef.current.find((candidate) => candidate.id === sourceId);
+      if (nd?.type === 'clone' && nd.data?.voiceId) return String(nd.data.voiceId);
     }
     return '';
   }, []);
@@ -2079,6 +3035,23 @@ function CanvasInner() {
       return rest;
     });
   }, []);
+
+  const commitGeneration = useCallback((targetId: string, output: CapOutput, urls: string[]) => {
+    setNodes((nds) => nds.map((nd) => {
+      if (nd.id !== targetId) return nd;
+      const current = (nd.data?.generationBatches || []) as GenerationBatch[];
+      const snapshot = outputSnapshot(output, urls);
+      const batch: GenerationBatch = {
+        ...snapshot,
+        id: `batch_${Date.now().toString(36)}`,
+        createdAt: Date.now(),
+        prompt: String(nd.data?.genPrompt || ''),
+        kind: String(nd.data?.genKind || nd.data?.kind || ''),
+      };
+      const generationBatches = [...current, batch];
+      return { ...nd, data: { ...nd.data, ...snapshot, generationBatches, activeBatch: generationBatches.length - 1, pendingTask: null } };
+    }));
+  }, [setNodes]);
 
   // LLM 变换节点:把节点文本(含上游文本)按模式送 /v1/chat/completions,结果回填 text
   const runLLM = useCallback(
@@ -2331,10 +3304,17 @@ function CanvasInner() {
       const inheritedPrompt = upstreamPrompt(anchorId).trim();
       const ownPrompt = String(node.data?.prompt || '').trim();
       const prompt = [inheritedPrompt, ownPrompt].filter(Boolean).join('\n');
+      // composer 里拖出来的输入顺序(data.inputOrder)在这里生效 —— 拖第一位的图就是首帧 / 模特图
+      const inputOrder = (node.data?.inputOrder as string[]) || [];
       const refs = cap.usesRefs
-        ? Array.from(new Set([...refThumbsFor(anchorId), ...((node.data?.refs as string[]) || [])]))
+        ? applyInputOrder(
+            Array.from(new Set([...refThumbsFor(anchorId), ...((node.data?.refs as string[]) || [])])),
+            inputOrder,
+            (u) => u,
+          )
         : [];
-      const audio = cap.usesAudio || cap.output === 'video' ? audioRefsFor(anchorId) : [];
+      const audio = cap.usesAudio || cap.output === 'video' ? applyInputOrder(audioRefsFor(anchorId), inputOrder, (u) => u) : [];
+      const models3d = cap.output === 'model3d' ? applyInputOrder(model3dRefsFor(anchorId), inputOrder, (u) => u) : [];
       // 音频节点若上游连了音色克隆节点,自动用克隆出的 voice_id(覆盖手选音色)
       const cloneVoice = cap.output === 'audio' ? cloneVoiceFor(anchorId) : '';
       let data = cloneVoice ? { ...node.data, voice: cloneVoice } : node.data || {};
@@ -2351,7 +3331,7 @@ function CanvasInner() {
         };
       }
 
-      const err = cap.validate({ prompt, refs, audio, data });
+      const err = cap.validate({ prompt, refs, audio, models3d, data });
       if (err) return void message.warning(err);
 
       if (cap.output === 'video' && /doubao-seedance-2-0/i.test(model) && audio.length > 0) {
@@ -2365,8 +3345,18 @@ function CanvasInner() {
         }
       }
 
-      const req = cap.request({ model, prompt, refs, audio, data });
-      const fileInfos = cap.output === 'video' ? fileInfosFor(anchorId) : [];
+      const req = cap.request({ model, prompt, refs, audio, models3d, data });
+      // file_infos 也跟着排。登记素材请求使用 asset://，面板缩略图使用 srcUrl，先映射到同一排序键。
+      const materialOrderKeys = new Map<string, string>();
+      for (const edge of edgesRef.current.filter((e) => e.target === anchorId)) {
+        const source = nodesRef.current.find((nd) => nd.id === edge.source);
+        if (source?.type !== 'material' || !source.data?.assetId || !source.data?.srcUrl) continue;
+        const assetId = String(source.data.assetId);
+        materialOrderKeys.set(assetId.startsWith('asset://') ? assetId : `asset://${assetId}`, String(source.data.srcUrl));
+      }
+      const fileInfos = cap.output === 'video'
+        ? applyInputOrder(fileInfosFor(anchorId), inputOrder, (i) => materialOrderKeys.get(i.Url) || i.Url)
+        : [];
       if (fileInfos.length > 0) {
         // Seedance 等上游禁止 FirstFrame/LastFrame 与 Reference media 混用。
         // 单图保持首帧驱动；多图或带音视频时统一切到纯 Reference 模式。
@@ -2380,35 +3370,24 @@ function CanvasInner() {
         }
       }
 
-      // 落点:节点已有产出 → 右侧新建节点承接(带上生成设置,清空输出);否则就地
+      // 运行只在当前任务节点内新增结果批次；画布拓扑只由节点两侧的“下一步”入口改变。
       const hasOwn =
         (node.data?.images || []).length > 0 || !!node.data?.videoUrl || !!node.data?.audioUrl || !!node.data?.model3dUrl;
-      let targetId = anchorId;
-      if (hasOwn) {
-        targetId = `${cap.id}_${Date.now().toString(36)}`;
-        setNodes((nds) =>
-          nds
-            .map((nd) => ({ ...nd, selected: false }))
-            .concat({
-              id: targetId,
-              type: 'image',
-              position: { x: node.position.x + 320, y: node.position.y },
-              // 结果节点:清空产出,标记 isResult + 记下生成时能力/提示词(供节点标注 / 区分上传节点;
-              // genKind 固定为生成那一刻的能力,不随后续 composer 切换改变)
-              data: {
-                ...node.data, images: [], videoUrl: undefined, audioUrl: undefined, model3dUrl: undefined,
-                refs: [], isResult: true, genKind: cap.id, genPrompt: prompt, pendingTask: undefined,
-              },
-              selected: true,
-            }),
-        );
-        setEdges((eds) =>
-          addEdge({ id: `flow_${targetId}`, source: anchorId, target: targetId, data: { kind: 'flow' } } as RFEdge, eds),
-        );
-      } else {
-        // 就地生成:把这个空节点本身转成结果节点(标注生成时能力/提示词)
-        updateNodeData(targetId, { isResult: true, genKind: cap.id, genPrompt: prompt });
-      }
+      const targetId = anchorId;
+      const taskInputs = node.data?.taskInputs || {
+        images: node.data?.images || [], videoUrl: node.data?.videoUrl,
+        audioUrl: node.data?.audioUrl, model3dUrl: node.data?.model3dUrl, mediaItems: node.data?.mediaItems || [],
+      };
+      const legacyBatches: GenerationBatch[] = node.data?.generationBatches || [];
+      const generationBatches = legacyBatches.length === 0 && node.data?.isResult && hasOwn
+        ? [{
+            images: node.data?.images || [], videoUrl: node.data?.videoUrl,
+            audioUrl: node.data?.audioUrl, model3dUrl: node.data?.model3dUrl,
+            id: `batch_legacy_${Date.now().toString(36)}`, createdAt: Date.now(),
+            prompt: String(node.data?.genPrompt || ''), kind: String(node.data?.genKind || node.data?.kind || ''),
+          }]
+        : legacyBatches;
+      updateNodeData(targetId, { isResult: true, genKind: cap.id, genPrompt: prompt, taskInputs, generationBatches });
 
       if (pollRef.current[targetId]) clearTimeout(pollRef.current[targetId]);
       setRunState((s) => ({ ...s, [targetId]: { status: 'running', startedAt: Date.now() } }));
@@ -2441,7 +3420,7 @@ function CanvasInner() {
             const blob = encodeWAV(mergeAudioBuffers(audioContext, buffers, SEG_GAP_MS));
             const url = await uploadAsset(new File([blob], req.filename, { type: 'audio/wav' }));
             if (!url) throw new Error('分段语音结果保存失败');
-            updateNodeData(targetId, applyOutput(cap.output, [url]));
+            commitGeneration(targetId, cap.output, [url]);
             clearRun(targetId);
             return;
           } finally {
@@ -2463,7 +3442,23 @@ function CanvasInner() {
           const blob = await r.blob();
           const url = await uploadAsset(new File([blob], req.filename, { type: blob.type || 'application/octet-stream' }));
           if (!url) throw new Error('结果保存失败');
-          updateNodeData(targetId, applyOutput(cap.output, [url]));
+          commitGeneration(targetId, cap.output, [url]);
+          clearRun(targetId);
+          return;
+        }
+
+        if (req.transport === 'syncJSON') {
+          // 同步 JSON(3D 格式转换):一次请求直接拿结果 URL,没有 task id 可轮询
+          const r = await authFetch(req.path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body),
+          });
+          const j = await r.json().catch(() => ({}) as any);
+          if (!r.ok) throw new Error(j?.error?.message || j?.message || `HTTP ${r.status}`);
+          const urls = req.extract(j);
+          if (!urls.length) throw new Error('上游未返回结果');
+          commitGeneration(targetId, cap.output, urls);
           clearRun(targetId);
           return;
         }
@@ -2474,7 +3469,7 @@ function CanvasInner() {
         const done = (task: any) => {
           const urls = extract(task);
           if (!urls.length) return markFailed(targetId, '上游未返回结果');
-          updateNodeData(targetId, { ...applyOutput(cap.output, urls), pendingTask: null });
+          commitGeneration(targetId, cap.output, urls);
           clearRun(targetId);
         };
         const r = await authFetch(req.path, {
@@ -2494,7 +3489,7 @@ function CanvasInner() {
         markFailed(targetId, e?.message || String(e));
       }
     },
-    [authFetch, upstreamPrompt, refThumbsFor, audioRefsFor, fileInfosFor, cloneVoiceFor, pollTask, updateNodeData, uploadAsset, markFailed, clearRun, setNodes, setEdges],
+    [authFetch, upstreamPrompt, refThumbsFor, audioRefsFor, model3dRefsFor, fileInfosFor, cloneVoiceFor, pollTask, updateNodeData, uploadAsset, markFailed, clearRun, commitGeneration],
   );
 
   // 续轮询:节点带 pendingTask(上游 task 未回)时,用其 kind 重建 extract 继续轮询到落节点。
@@ -2503,19 +3498,19 @@ function CanvasInner() {
       const pt = nd.data?.pendingTask as { taskId?: string; pollBase?: string } | undefined;
       if (!pt?.taskId || !pt?.pollBase) return;
       const cap = capById(nd.data?.kind);
-      const req = cap.request({ model: nd.data?.model || '', prompt: '', refs: [], audio: [], data: nd.data || {} });
+      const req = cap.request({ model: nd.data?.model || '', prompt: '', refs: [], audio: [], models3d: [], data: nd.data || {} });
       if (req.transport !== 'async') return;
       const extract = req.extract;
       const finish = (task: any) => {
         const urls = extract(task);
         if (!urls.length) return markFailed(nd.id, '上游未返回结果');
-        updateNodeData(nd.id, { ...applyOutput(cap.output, urls), pendingTask: null });
+        commitGeneration(nd.id, cap.output, urls);
         clearRun(nd.id);
       };
       setRunState((s) => ({ ...s, [nd.id]: { status: 'running', startedAt: Date.now() } }));
       pollTask(nd.id, `${pt.pollBase}${pt.taskId}`, finish);
     },
-    [pollTask, markFailed, updateNodeData, clearRun],
+    [pollTask, markFailed, updateNodeData, clearRun, commitGeneration],
   );
 
   // 画布载入完成后,扫描仍带 pendingTask 且未在轮询的节点,自动续上(刷新/切文档/切标签后恢复长任务)
@@ -2549,7 +3544,7 @@ function CanvasInner() {
         setMenu(null);
         return;
       }
-      setMenu({ x: e.clientX, y: e.clientY, source: null });
+      setMenu({ x: e.clientX, y: e.clientY, spawnX: e.clientX, spawnY: e.clientY, source: null, mode: 'commands' });
     };
     document.addEventListener('contextmenu', handler, true);
     return () => document.removeEventListener('contextmenu', handler, true);
@@ -2557,6 +3552,7 @@ function CanvasInner() {
 
   const onConnectStart = useCallback((_: unknown, p: { nodeId: string | null }) => {
     connectingRef.current = p.nodeId;
+    setConnecting(true);
   }, []);
   const onConnectEnd = useCallback(
     (e: MouseEvent | TouchEvent) => {
@@ -2565,21 +3561,70 @@ function CanvasInner() {
         const cx = (e as MouseEvent).clientX ?? (e as TouchEvent).changedTouches?.[0]?.clientX;
         const cy = (e as MouseEvent).clientY ?? (e as TouchEvent).changedTouches?.[0]?.clientY;
         const source = connectingRef.current;
-        // 从节点手柄拖到空白 → 直接建「图片生成」节点(连源、选中),composer 立即浮现、源图作参考;
-        // 空白处拖出(无源)→ 才弹新建菜单让用户挑类型。
-        // 延后一帧建节点:避开 react-flow 连线结束时对选中态的清理,否则新节点会被取消选中、composer 不浮现。
-        if (source) setTimeout(() => spawnNode('image', cx, cy, source), 0);
-        else setMenu({ x: cx, y: cy, source: null });
+        // 拖线到空白和节点侧边加号保持一致:先选类型,再创建并自动连线。
+        setMenu({ x: cx, y: cy, spawnX: cx, spawnY: cy, source: source || null, mode: 'create' });
       }
       connectingRef.current = null;
+      setConnecting(false);
     },
-    [spawnNode],
+    [],
   );
 
+  const addUploadedFiles = useCallback(async (files: File[], x: number, y: number) => {
+    const uploaded = await Promise.all(files.map(async (file) => {
+      const url = await uploadAsset(file);
+      return url ? { url, kind: mediaKindOf(file.type, file.name), name: file.name } as NodeMediaItem : null;
+    }));
+    const mediaItems = uploaded.filter(Boolean) as NodeMediaItem[];
+    if (!mediaItems.length) return;
+    const firstKind = mediaItems[0].kind;
+    const id = spawnNode('image', x, y, null, firstKind === 'video' ? 'video' : firstKind === 'audio' ? 'audio' : firstKind === 'model3d' ? '3d' : 'image');
+    updateNodeData(id, {
+      mediaItems,
+      images: mediaItems.filter((item) => item.kind === 'image').map((item) => item.url),
+      videoUrl: mediaItems.find((item) => item.kind === 'video')?.url,
+      audioUrl: mediaItems.find((item) => item.kind === 'audio')?.url,
+      model3dUrl: mediaItems.find((item) => item.kind === 'model3d')?.url,
+    });
+  }, [spawnNode, updateNodeData, uploadAsset]);
+
+  const pasteAtMenu = useCallback(async () => {
+    if (!menu) return;
+    const x = menu.spawnX ?? menu.x;
+    const y = menu.spawnY ?? menu.y;
+    try {
+      const items = await navigator.clipboard.read();
+      const files: File[] = [];
+      for (const item of items) {
+        const type = item.types.find((t) => /^(image|video|audio)\//.test(t));
+        if (type) files.push(new File([await item.getType(type)], `clipboard.${type.split('/')[1] || 'png'}`, { type }));
+      }
+      if (files.length) await addUploadedFiles(files, x, y);
+      else {
+        const text = (await navigator.clipboard.readText()).trim();
+        if (!text) throw new Error('剪贴板为空');
+        if (/^https?:\/\//i.test(text) && mediaKindOf('', text) !== 'image') {
+          const kind = mediaKindOf('', text);
+          const id = spawnNode('image', x, y, null, kind === 'video' ? 'video' : kind === 'audio' ? 'audio' : kind === 'model3d' ? '3d' : 'image');
+          updateNodeData(id, kind === 'video' ? { videoUrl: text } : kind === 'audio' ? { audioUrl: text } : kind === 'model3d' ? { model3dUrl: text } : { images: [text] });
+        } else if (/^https?:\/\//i.test(text)) {
+          const id = spawnNode('image', x, y, null, 'image');
+          updateNodeData(id, { images: [text] });
+        } else {
+          const id = spawnNode('prompt', x, y, null);
+          updateNodeData(id, { text });
+        }
+      }
+    } catch (e: any) {
+      message.warning(e?.message || '无法读取剪贴板，请允许浏览器访问');
+    }
+    setMenu(null);
+  }, [menu, addUploadedFiles, spawnNode, updateNodeData]);
+
   const pickCreate = useCallback(
-    (type: string) => {
+    (type: string, capabilityId?: string) => {
       if (!menu) return;
-      spawnNode(type, menu.x, menu.y, menu.source || null);
+      spawnNode(type, menu.spawnX ?? menu.x, menu.spawnY ?? menu.y, menu.source || null, capabilityId, menu.target || null);
       setMenu(null);
     },
     [menu, spawnNode],
@@ -2621,7 +3666,7 @@ function CanvasInner() {
     return () => window.removeEventListener('keydown', onKey);
   }, [preview]);
 
-  const fetchCanvasMedia = useCallback(async (url: string, filename: string): Promise<Blob> => {
+  const fetchCanvasMediaResponse = useCallback(async (url: string, filename: string): Promise<Response> => {
     const response = await authFetch('/v1/canvas/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2631,28 +3676,80 @@ function CanvasInner() {
       const body = await response.json().catch(() => ({}));
       throw new Error(body?.message || body?.error?.message || `下载失败 (HTTP ${response.status})`);
     }
-    return response.blob();
+    return response;
   }, [authFetch]);
 
+  const fetchCanvasMedia = useCallback(async (url: string, filename: string): Promise<Blob> => {
+    const response = await fetchCanvasMediaResponse(url, filename);
+    return response.blob();
+  }, [fetchCanvasMediaResponse]);
+
   const downloadMedia = useCallback(async (url: string, category: CanvasMaterial['category']) => {
-    const fallbackName = `canvas-${Date.now()}.${category === 'Image' ? 'png' : category === 'Video' ? 'mp4' : category === 'Audio' ? 'mp3' : 'bin'}`;
-    const hide = message.loading('正在准备下载…', 0);
-    try {
-      const blob = await fetchCanvasMedia(url, fallbackName);
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = fallbackName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    } catch (e: any) {
-      message.error(e?.message || '下载失败');
-    } finally {
-      hide();
+    // 3D 模型没有固定后缀,取 URL 上的真实后缀;一律 .bin 的话下下来本地打不开。
+    const urlExt = (url.split(/[?#]/)[0].match(/\.([a-z0-9]{2,5})$/i)?.[1] || '').toLowerCase();
+    const ext = category === 'Image' ? 'png' : category === 'Video' ? 'mp4' : category === 'Audio' ? 'mp3' : urlExt || 'bin';
+    const fallbackName = `canvas-${Date.now()}.${ext}`;
+    if (activeDownloadsRef.current.has(url)) {
+      message.info('这个文件正在下载');
+      return;
     }
-  }, [fetchCanvasMedia]);
+    activeDownloadsRef.current.add(url);
+    const messageKey = `canvas-download-${Date.now()}`;
+    try {
+      const picker = (window as any).showSaveFilePicker as ((options: any) => Promise<any>) | undefined;
+      let fileHandle: any;
+      if (picker) {
+        fileHandle = await picker({ suggestedName: fallbackName });
+      }
+
+      message.loading({ content: '正在下载…', duration: 0, key: messageKey });
+      const response = await fetchCanvasMediaResponse(url, fallbackName);
+
+      // Chromium 系浏览器可直接把响应流写入磁盘，避免大视频完整堆在内存里。
+      if (fileHandle && response.body) {
+        const writable = await fileHandle.createWritable();
+        const total = Number(response.headers.get('Content-Length')) || 0;
+        let received = 0;
+        let lastProgressAt = 0;
+        const progressStream = new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            received += chunk.byteLength;
+            const now = Date.now();
+            if (now - lastProgressAt >= 250 || (total > 0 && received >= total)) {
+              lastProgressAt = now;
+              const receivedMB = (received / 1024 / 1024).toFixed(1);
+              const progress = total > 0
+                ? ` ${Math.min(100, Math.round((received / total) * 100))}%`
+                : ` ${receivedMB} MB`;
+              message.loading({ content: `正在下载…${progress}`, duration: 0, key: messageKey });
+            }
+            controller.enqueue(chunk);
+          },
+        });
+        await response.body.pipeThrough(progressStream).pipeTo(writable);
+      } else {
+        // Safari / Firefox 兼容路径：仍使用 Blob，但保留统一的错误处理和重复点击保护。
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = fallbackName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+      message.success({ content: '下载完成', key: messageKey });
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') {
+        message.error({ content: e?.message || '下载失败', key: messageKey });
+      } else {
+        message.destroy(messageKey);
+      }
+    } finally {
+      activeDownloadsRef.current.delete(url);
+    }
+  }, [fetchCanvasMediaResponse]);
 
   const convertToMaterial = useCallback(async (id: string) => {
     const node = nodesRef.current.find((nd) => nd.id === id);
@@ -2703,9 +3800,12 @@ function CanvasInner() {
     const rect = rootRef.current?.getBoundingClientRect();
     if (!rect) return;
     const pos = rf.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-    const ct = String(item.content_type || '').toLowerCase();
+    const kind = mediaKindOf(item.content_type, item.url);
     const id = `image_${Date.now().toString(36)}`;
-    const media = ct.startsWith('video/') ? { videoUrl: item.url } : ct.startsWith('audio/') ? { audioUrl: item.url } : { images: [item.url] };
+    const media = kind === 'video' ? { videoUrl: item.url }
+      : kind === 'audio' ? { audioUrl: item.url }
+      : kind === 'model3d' ? { model3dUrl: item.url }
+      : { images: [item.url] };
     setNodes((nds) => nds.map((nd) => ({ ...nd, selected: false })).concat({
       id, type: 'image', position: pos, selected: true,
       data: { ...capDefault(capById('image'), modelsForCap(capById('image'), modelsByType)), ...media, materialAssetId: item.asset_id, assetId: item.upstream_asset_id || '', materialName: item.name || '素材', materialUrl: item.url },
@@ -2771,7 +3871,7 @@ function CanvasInner() {
       value={{
         runState, chatModels: modelsByType.chat || [], liveVoices, updateNodeData, selectNode, deleteNode, uploadAsset, openPreview,
         downloadMedia, convertToMaterial,
-        runLLM, runClone, openLive, runMaterial, startLiveness,
+        runLLM, runClone, openLive, runMaterial, startLiveness, openNodeCreate, selectBatch,
       }}
     >
       <div className="cs-root" ref={rootRef}>
@@ -2794,89 +3894,140 @@ function CanvasInner() {
             <MiniMap pannable zoomable />
           </ReactFlow>
 
-          <Composer
-            anchor={anchor}
-            modelsByType={modelsByType}
-            running={!!(anchor && runState[anchor.id]?.status === 'running')}
-            derivedRefs={anchor ? refThumbsFor(anchor.id) : []}
-            derivedAudio={anchor ? audioRefsFor(anchor.id) : []}
-            derivedVideo={anchor ? videoRefsFor(anchor.id) : []}
-            upstreamPrompt={anchor ? upstreamPrompt(anchor.id) : ''}
-            onPatch={(patch) => anchor && updateNodeData(anchor.id, patch)}
-            onRun={() => anchor && runGenerator(anchor.id)}
-            onAddRef={(file) => anchor && addAnchorRef(anchor.id, file)}
-            materials={materials}
-          />
-        </div>
-
-        <div className="cs-topbar">
-          <div className="cs-panel cs-nav">
-            <span style={{ fontSize: 18, lineHeight: 1 }}>{currentIcon}</span>
-            <div className="cs-nav-meta">
-              <input
-                className="cs-title-input"
-                value={title}
-                onChange={(e) => rename(e.target.value)}
-                placeholder="未命名画布"
-              />
-              <span className="cs-time">{nodes.length} 个节点</span>
-            </div>
-            <Select
-              className="cs-nav-doc"
-              size="small"
-              value={docId || undefined}
-              onChange={openDoc}
-              placeholder="切换画布"
-              options={docs.map((d) => ({ value: d.id, label: `${d.icon || '🎨'} ${d.title || '未命名'}` }))}
+          {!connecting && (
+            <Composer
+              anchor={anchor}
+              modelsByType={modelsByType}
+              running={!!(anchor && runState[anchor.id]?.status === 'running')}
+              derivedRefs={anchor ? refThumbsFor(anchor.id) : []}
+              derivedAudio={anchor ? audioRefsFor(anchor.id) : []}
+              derivedVideo={anchor ? videoRefsFor(anchor.id) : []}
+              derivedModel3d={anchor ? model3dRefsFor(anchor.id) : []}
+              upstreamPrompt={anchor ? upstreamPrompt(anchor.id) : ''}
+              onPatch={(patch) => anchor && updateNodeData(anchor.id, patch)}
+              onRun={() => anchor && runGenerator(anchor.id)}
+              onAddRef={(file) => anchor && addAnchorRef(anchor.id, file)}
+              materials={materials}
+              onExpandPrompt={() => anchor && setPromptExpanded(anchor.id)}
+              onAddPrompt={() => {
+                if (!anchor) return;
+                const screen = rf.flowToScreenPosition({ x: anchor.position.x - 320, y: anchor.position.y });
+                spawnNode('prompt', screen.x, screen.y, null, undefined, anchor.id);
+              }}
             />
-          </div>
-
-          <div className="cs-panel cs-toolbar">
-            <div className="cs-toolbar-items">
-              <button className="cs-tool-btn primary" onClick={createDoc}>
-                <PlusOutlined />
-                新画布
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('image')}>
-                <PictureOutlined />
-                上传
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('prompt')}>
-                <EditOutlined />
-                提示词
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('image', 'virtualman')}>
-                <UserOutlined />
-                数智人
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('image', 'tryon')}>
-                <SkinOutlined />
-                换装
-              </button>
-              <button className="cs-tool-btn" onClick={openMaterialLibrary}>
-                <AppstoreOutlined />
-                素材库
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('clone')}>
-                <CustomerServiceOutlined />
-                音色
-              </button>
-              <button className="cs-tool-btn" onClick={() => addNodeCenter('live')}>
-                <VideoCameraOutlined />
-                直播
-              </button>
-              <button
-                className="cs-tool-btn cs-fullscreen-btn"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? '退出全屏 (Esc)' : '全屏使用'}
-                aria-label={isFullscreen ? '退出全屏' : '全屏使用'}
-              >
-                {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-              </button>
-            </div>
-            <span className="cs-save">{saveHint}</span>
-          </div>
+          )}
         </div>
+
+        <div className={`canvas-fab-dock${fabOpen ? ' open' : ''}${fabDocked ? ` docked ${fabDocked}` : ''}`} style={{ left: fabPos.x, top: fabPos.y }}>
+          <button className="canvas-fab-item fab-add" type="button" title="添加节点" onClick={() => {
+            addNodeCenter('image', 'image');
+            setMenu(null);
+            setFabOpen(false);
+          }}><PlusOutlined /><span>添加节点</span></button>
+          <button className="canvas-fab-item fab-library" type="button" title="素材库" onClick={() => { openMaterialLibrary(); setFabOpen(false); }}>
+            <AppstoreOutlined /><span>素材库</span>
+          </button>
+          <button className="canvas-fab-item fab-chat" type="button" title="对话" onClick={() => {
+            setChatOpen(true);
+            setFabOpen(false);
+          }}><MessageOutlined /><span>对话</span></button>
+          <button className="canvas-fab-item fab-canvas" type="button" title="画布" onClick={() => {
+            setCanvasPanelOpen((v) => !v);
+            setFabOpen(false);
+          }}>
+            <PictureOutlined /><span>画布</span>
+          </button>
+          <button className="canvas-fab-item fab-key" type="button" title={`密钥 ${maskKey(apiKey)}`} onClick={() => {
+            setKeyDraft(''); setKeyPanelOpen((v) => !v); setFabOpen(false);
+          }}><KeyOutlined /><span>密钥</span></button>
+          <button className="canvas-fab-item fab-full" type="button" title={isFullscreen ? '退出全屏' : '全屏'} onClick={() => { toggleFullscreen(); setFabOpen(false); }}>
+            {isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}<span>全屏</span>
+          </button>
+          <button className="canvas-fab-main" type="button" title="拖动可移动，点击展开" onPointerDown={onFabPointerDown} onPointerMove={onFabPointerMove} onPointerUp={onFabPointerUp}>
+            <AppstoreOutlined />
+          </button>
+        </div>
+
+        {canvasPanelOpen && (
+          <div className="canvas-switch-panel" style={{ left: Math.min(fabPos.x + 72, 300), top: Math.max(12, fabPos.y - 70) }}>
+            <div className="canvas-switch-head"><span>{currentIcon}</span><strong>画布</strong><small>{saveHint}</small><button onClick={() => setCanvasPanelOpen(false)}><CloseOutlined /></button></div>
+            <input className="canvas-switch-title" value={title} onChange={(e) => rename(e.target.value)} placeholder="未命名画布" />
+            <Select className="canvas-switch-select" value={docId || undefined} onChange={openDoc} placeholder="切换画布"
+              options={docs.map((d) => ({ value: d.id, label: `${d.icon || '🎨'} ${d.title || '未命名'}` }))}
+              getPopupContainer={() => rootRef.current || document.body} />
+            <div className="canvas-switch-actions">
+              <button className="primary" onClick={createDoc}><PlusOutlined /> 新建画布</button>
+              <button className="danger" onClick={deleteDoc} disabled={!docId}><DeleteOutlined /> 删除</button>
+            </div>
+            <span className="canvas-switch-count">{nodes.length} 个节点</span>
+          </div>
+        )}
+
+        {chatOpen && (
+          <section className="canvas-chat-window">
+            <header className="canvas-chat-head">
+              <MessageOutlined />
+              <strong>画布对话</strong>
+              <Select
+                size="small"
+                value={chatModel || modelsByType.chat?.[0]?.value}
+                onChange={setChatModel}
+                options={(modelsByType.chat || []).map((m) => ({ value: m.value, label: m.label }))}
+                placeholder="选择模型"
+                getPopupContainer={() => rootRef.current || document.body}
+              />
+              <button type="button" title="关闭" onClick={() => setChatOpen(false)}><CloseOutlined /></button>
+            </header>
+            <div className="canvas-chat-messages">
+              {chatMessages.length === 0 && <div className="canvas-chat-empty">开始一个画布内会话</div>}
+              {chatMessages.map((item, index) => (
+                <div className={`canvas-chat-line ${item.role}`} key={index}>{item.content}</div>
+              ))}
+              {chatSending && <div className="canvas-chat-line assistant pending">正在思考…</div>}
+            </div>
+            <footer className="canvas-chat-compose">
+              <textarea value={chatDraft} onChange={(e) => setChatDraft(e.target.value)} placeholder="输入消息…"
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCanvasChat(); } }} />
+              <button type="button" onClick={sendCanvasChat} disabled={chatSending || !chatDraft.trim()}>
+                <ThunderboltOutlined /> 发送
+              </button>
+            </footer>
+          </section>
+        )}
+
+        {keyPanelOpen && (
+          <div className="canvas-key-panel">
+            <div className="canvas-material-library-head">
+              <strong>API Key</strong>
+              <button title="关闭" onClick={() => setKeyPanelOpen(false)}><CloseOutlined /></button>
+            </div>
+            <div className="canvas-key-body">
+              <div className="canvas-key-current">
+                <span>当前</span>
+                <code>{maskKey(apiKey)}</code>
+              </div>
+              <Input.Password
+                size="small"
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value.trim())}
+                onPressEnter={switchKey}
+                placeholder="换成另一把 sk-…"
+                autoComplete="off"
+                allowClear
+              />
+              <div className="canvas-key-actions">
+                <button className="canvas-key-btn primary" type="button" onClick={switchKey} disabled={!keyDraft.trim()}>
+                  切换
+                </button>
+                <button className="canvas-key-btn" type="button" onClick={signOutKey}>
+                  <LogoutOutlined />
+                  退出
+                </button>
+              </div>
+              <p className="canvas-key-tip">退出会清掉本机保存的密钥,画布内容留在服务端,换回同一把 key 就能继续。</p>
+            </div>
+          </div>
+        )}
 
         {materialLibraryOpen && (
           <div className="canvas-material-library">
@@ -2888,14 +4039,17 @@ function CanvasInner() {
               {materialsLoading ? (
                 <div className="canvas-material-empty">加载中…</div>
               ) : storedMaterials.length ? storedMaterials.map((item) => {
-                const ct = String(item.content_type || '').toLowerCase();
+                const kind = mediaKindOf(item.content_type, item.url);
                 return (
                   <button className="canvas-material-item" key={item.id} onClick={() => addStoredMaterial(item)}>
                     <span className="canvas-material-preview">
-                      {ct.startsWith('image/') ? <img src={item.url} alt="" /> : ct.startsWith('video/') ? <video src={item.url} muted /> : <CustomerServiceOutlined />}
+                      {kind === 'image' ? <img src={item.url} alt="" />
+                        : kind === 'video' ? <video src={item.url} muted />
+                        : kind === 'model3d' ? <ExperimentOutlined />
+                        : <CustomerServiceOutlined />}
                     </span>
                     <span className="canvas-material-name">{item.name || `素材 ${item.asset_id}`}</span>
-                    <span className="canvas-material-type">{ct.startsWith('video/') ? '视频' : ct.startsWith('audio/') ? '音频' : '图片'}</span>
+                    <span className="canvas-material-type">{kind === 'video' ? '视频' : kind === 'audio' ? '音频' : kind === 'model3d' ? '3D' : '图片'}</span>
                   </button>
                 );
               }) : (
@@ -2907,24 +4061,57 @@ function CanvasInner() {
 
         {menu && (
           <div
-            className="create-menu open"
+            className={`create-menu open${menu.mode === 'commands' ? ' canvas-command-menu' : ''}`}
             style={{ left: menu.x, top: menu.y }}
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <div className="create-menu-grid">
-              {CREATE_CARDS.map((m) => (
-                <button key={m.type} className="create-card" onClick={() => pickCreate(m.type)}>
-                  <span className="create-card-icon">{m.icon}</span>
-                  <span>
-                    <div className="create-card-title">{m.label}</div>
-                    <div className="create-card-sub">{m.sub}</div>
-                  </span>
-                </button>
-              ))}
-            </div>
+            {menu.mode === 'commands' ? (
+              <div className="canvas-command-list">
+                <button onClick={() => {
+                  contextSpawnRef.current = { x: menu.spawnX ?? menu.x, y: menu.spawnY ?? menu.y };
+                  contextUploadRef.current?.click();
+                  setMenu(null);
+                }}><UploadOutlined /><span>上传</span></button>
+                <button onClick={() => { openMaterialLibrary(); setMenu(null); }}><AppstoreOutlined /><span>素材库</span></button>
+                <div className="command-separator" />
+                <button onClick={() => setMenu({ ...menu, mode: 'create' })}><PlusOutlined /><span>添加节点</span><small>›</small></button>
+                <div className="command-separator" />
+                <button disabled={historyIndexRef.current <= 0} onClick={() => applyHistory(-1)}><UndoOutlined /><span>撤销</span><kbd>⌘Z</kbd></button>
+                <button disabled={historyIndexRef.current >= historyRef.current.length - 1} onClick={() => applyHistory(1)}><RedoOutlined /><span>重做</span><kbd>⇧⌘Z</kbd></button>
+                <button onClick={pasteAtMenu}><SnippetsOutlined /><span>粘贴</span><kbd>⌘V</kbd></button>
+              </div>
+            ) : (
+              <>
+                {menu.side && <div className="create-menu-title">在{menu.side === 'left' ? '左' : '右'}侧添加节点</div>}
+                <div className="create-menu-grid">
+                  {CREATE_CARDS.map((m) => (
+                    <button key={m.id} className="create-card" onClick={() => pickCreate(m.type, m.capabilityId)}>
+                      <span className="create-card-icon">{m.icon}</span>
+                      <span>
+                        <div className="create-card-title">{m.label}</div>
+                        <div className="create-card-sub">{m.sub}</div>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
+
+        <input
+          ref={contextUploadRef}
+          type="file"
+          multiple
+          accept={UPLOAD_ACCEPT}
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length) addUploadedFiles(files, contextSpawnRef.current.x, contextSpawnRef.current.y);
+            e.target.value = '';
+          }}
+        />
 
         {mediaMenu && mediaMenuNode && mediaMenuURL && (
           <div
@@ -2957,6 +4144,21 @@ function CanvasInner() {
               <DigitalHumanLivePanel seed={liveSeed} />
             </div>
           </div>
+        )}
+
+        {anchor && promptExpanded === anchor.id && (
+          <PromptModal
+            capLabel={capById(anchor.data?.kind).label}
+            placeholder={capById(anchor.data?.kind).promptPlaceholder}
+            isAudio={capById(anchor.data?.kind).id === 'audio'}
+            prompt={String(anchor.data?.prompt || '')}
+            mentionMaterials={(anchor.data?.mentionMaterials || []) as CanvasMaterial[]}
+            refs={(anchor.data?.refs || []) as string[]}
+            derivedRefs={refThumbsFor(anchor.id)}
+            materials={materials}
+            onPatch={(patch) => updateNodeData(anchor.id, patch)}
+            onClose={() => setPromptExpanded(null)}
+          />
         )}
 
         {preview && (
