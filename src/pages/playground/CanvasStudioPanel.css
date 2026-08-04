@@ -347,6 +347,8 @@
 
 /* ============ 端口(react-flow handle → 参考 node-port:白底深环,hover/选中显现) ============ */
 .cs-root .react-flow__handle {
+  /* 端口在 DOM 里排在图片/内容之前,不给 z-index 会被后面的定位元素(.image-wrap 等)盖住 */
+  z-index: 12;
   width: 14px;
   height: 14px;
   min-width: 14px;

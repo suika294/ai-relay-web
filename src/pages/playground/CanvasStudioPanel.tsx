@@ -38,7 +38,7 @@ import {
 } from '@ant-design/icons';
 import { Input, message, Modal, Select } from 'antd';
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react';
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactFlow, {
   addEdge,
   Controls,
@@ -2339,6 +2339,7 @@ type MenuState = {
   source?: string | null;
   target?: string | null;
   side?: 'left' | 'right';
+  title?: string;
   mode?: 'commands' | 'create';
 };
 type GraphSnapshot = { nodes: RFNode[]; edges: RFEdge[] };
@@ -2392,6 +2393,8 @@ function CanvasInner() {
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const connectingRef = useRef<string | null>(null);
+  const connectingSideRef = useRef<'source' | 'target'>('source');
+  const menuRef = useRef<HTMLDivElement>(null);
   const fabDragRef = useRef<{ pointerId: number; sx: number; sy: number; ox: number; oy: number; x: number; y: number; moved: boolean } | null>(null);
   const pollRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   useEffect(() => {
@@ -3550,21 +3553,37 @@ function CanvasInner() {
     return () => document.removeEventListener('contextmenu', handler, true);
   }, []);
 
-  const onConnectStart = useCallback((_: unknown, p: { nodeId: string | null }) => {
+  const onConnectStart = useCallback((_: unknown, p: { nodeId: string | null; handleType: string | null }) => {
     connectingRef.current = p.nodeId;
+    // 左侧是 target 口:从它拖出来的新节点应当是上游(新 → 当前),不能反向连。
+    connectingSideRef.current = p.handleType === 'target' ? 'target' : 'source';
     setConnecting(true);
   }, []);
+  // 注意:这里不能再用 ReactFlow 的 onPaneClick 关菜单 —— 拖线松手时 pane 会收到同一次交互的 click
+  // (按下在端口、抬起在画布,公共祖先正是 pane),会把下面刚打开的创建菜单立刻清掉。点空白关菜单
+  // 交给 document 上的 pointerdown 捕获监听,时机更早也更统一。
   const onConnectEnd = useCallback(
     (e: MouseEvent | TouchEvent) => {
       const target = e.target as HTMLElement;
       if (target?.classList?.contains('react-flow__pane')) {
         const cx = (e as MouseEvent).clientX ?? (e as TouchEvent).changedTouches?.[0]?.clientX;
         const cy = (e as MouseEvent).clientY ?? (e as TouchEvent).changedTouches?.[0]?.clientY;
-        const source = connectingRef.current;
-        // 拖线到空白和节点侧边加号保持一致:先选类型,再创建并自动连线。
-        setMenu({ x: cx, y: cy, spawnX: cx, spawnY: cy, source: source || null, mode: 'create' });
+        const from = connectingRef.current;
+        const fromTarget = connectingSideRef.current === 'target';
+        // 拖线到空白和节点侧边加号保持一致:先选类型,再在松手处创建并自动连线。
+        setMenu({
+          x: cx,
+          y: cy,
+          spawnX: cx,
+          spawnY: cy,
+          source: fromTarget ? null : from || null,
+          target: fromTarget ? from || null : null,
+          title: from ? (fromTarget ? '新节点 → 当前节点' : '当前节点 → 新节点') : undefined,
+          mode: 'create',
+        });
       }
       connectingRef.current = null;
+      connectingSideRef.current = 'source';
       setConnecting(false);
     },
     [],
@@ -3629,6 +3648,22 @@ function CanvasInner() {
     },
     [menu, spawnNode],
   );
+
+  // 菜单贴着松手点/右键点弹出,靠近画布右下角时会溢出视口 —— 渲染后量一次实际尺寸再往回收。
+  const [menuShift, setMenuShift] = useState({ x: 0, y: 0 });
+  useLayoutEffect(() => {
+    if (!menu) {
+      setMenuShift({ x: 0, y: 0 });
+      return;
+    }
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuShift({
+      x: Math.min(0, window.innerWidth - 12 - (menu.x + r.width)),
+      y: Math.min(0, window.innerHeight - 12 - (menu.y + r.height)),
+    });
+  }, [menu]);
 
   useEffect(() => {
     if (!menu && !mediaMenu) return undefined;
@@ -3884,7 +3919,6 @@ function CanvasInner() {
             onConnect={onConnect}
             onConnectStart={onConnectStart}
             onConnectEnd={onConnectEnd}
-            onPaneClick={() => setMenu(null)}
             nodeTypes={nodeTypes}
             deleteKeyCode={['Delete', 'Backspace']}
             minZoom={0.2}
@@ -4061,8 +4095,9 @@ function CanvasInner() {
 
         {menu && (
           <div
+            ref={menuRef}
             className={`create-menu open${menu.mode === 'commands' ? ' canvas-command-menu' : ''}`}
-            style={{ left: menu.x, top: menu.y }}
+            style={{ left: menu.x + menuShift.x, top: menu.y + menuShift.y }}
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
@@ -4083,7 +4118,11 @@ function CanvasInner() {
               </div>
             ) : (
               <>
-                {menu.side && <div className="create-menu-title">在{menu.side === 'left' ? '左' : '右'}侧添加节点</div>}
+                {(menu.title || menu.side) && (
+                  <div className="create-menu-title">
+                    {menu.title || `在${menu.side === 'left' ? '左' : '右'}侧添加节点`}
+                  </div>
+                )}
                 <div className="create-menu-grid">
                   {CREATE_CARDS.map((m) => (
                     <button key={m.id} className="create-card" onClick={() => pickCreate(m.type, m.capabilityId)}>
