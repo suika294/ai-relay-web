@@ -28,6 +28,9 @@ import SummaryBar, { SummaryStat } from '@/components/SummaryBar';
 import { billingApi } from '@/services/api';
 import { downloadCSV } from '@/utils/download';
 
+// 发起支付宝支付时暂存订单号,供 return_url 跳回后续上查单轮询
+const PENDING_ORDER_KEY = 'recharge:pending_order_no';
+
 export default function Recharge() {
   const intl = useIntl();
   const orderRef = useRef<ActionType>();
@@ -70,16 +73,28 @@ export default function Recharge() {
   };
   const [wxPay, setWxPay] = useState<WxPay | null>(null);
 
-  // 弹窗打开后轮询查单：上游确认已支付(status===1)就自动关窗 + 刷新列表。
-  // 不依赖异步回调，本地无公网回调也能确认。组件卸载 / 关窗时清掉定时器。
+  // ---- 待确认订单轮询（微信扫码弹窗 / 支付宝新窗口共用）----
+  // 微信是同页扫码，支付宝是 window.open 跳走后回到 return_url，两条路都不能只等
+  // 异步回调：notify_url 不可达（内网 / 非 80,443 端口 / 证书问题）时订单会永远 pending。
+  const [watchOrder, setWatchOrder] = useState<string | null>(null);
+
   useEffect(() => {
-    if (!wxPay) return;
-    const orderNo = wxPay.order.order_no;
+    if (!watchOrder) return;
+    const startedAt = Date.now();
     const timer = setInterval(async () => {
+      // 上限 10 分钟：支付宝跳走后用户可能一去不回，别让定时器永远挂着空转
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
+        clearInterval(timer);
+        setWatchOrder(null);
+        return;
+      }
+      // 页面在后台时跳过，省掉切走后的无效请求；切回来下个 tick 自然续上
+      if (document.visibilityState === 'hidden') return;
       try {
-        const r = await billingApi.queryOrderStatus(orderNo);
+        const r = await billingApi.queryOrderStatus(watchOrder);
         if (r.code === 0 && r.data?.status === 1) {
           clearInterval(timer);
+          setWatchOrder(null);
           setWxPay(null);
           message.success(intl.formatMessage({ id: 'billing.recharge.paySuccessToast' }));
           orderRef.current?.reload();
@@ -89,7 +104,20 @@ export default function Recharge() {
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [wxPay]);
+  }, [watchOrder]);
+
+  // 支付宝 return_url 跳回本页（?paid=1）时立刻接管轮询。订单号优先取支付宝同步
+  // 跳转带回的 out_trade_no；缺失时回落到发起支付时存的 sessionStorage（window.open
+  // 的新标签会继承 opener 的 sessionStorage 副本，两条路都能拿到）。
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const stored = sessionStorage.getItem(PENDING_ORDER_KEY);
+    const orderNo = sp.get('out_trade_no') || stored;
+    if (!orderNo) return;
+    if (sp.get('paid') !== '1' && !stored) return;
+    sessionStorage.removeItem(PENDING_ORDER_KEY);
+    setWatchOrder(orderNo);
+  }, []);
 
   // ---- 充值（走 ModalForm）----
   const handlePay = async (values: { amount: number; currency: string; method: string }) => {
@@ -100,7 +128,10 @@ export default function Recharge() {
     });
     if (res.code !== 0 || !res.data) return false;
     if (res.data.pay_url) {
-      // 支付宝 PC 网页:直接跳上游收银台
+      // 支付宝 PC 网页:新标签跳上游收银台。本标签接着轮询查单,同时把订单号存进
+      // sessionStorage —— 用户在新标签付完被 return_url 带回时,那边也能续上轮询。
+      sessionStorage.setItem(PENDING_ORDER_KEY, res.data.order_no);
+      setWatchOrder(res.data.order_no);
       window.open(res.data.pay_url, '_blank');
     } else if (res.data.qr_code) {
       // 微信 Native:qr_code 是 weixin:// 深链,渲染成二维码 + 轮询查单（见 wxPay 弹窗）
@@ -112,6 +143,7 @@ export default function Recharge() {
           quota_amount: res.data.quota_amount,
         },
       });
+      setWatchOrder(res.data.order_no);
     } else {
       Modal.info({
         title: intl.formatMessage({ id: 'billing.recharge.orderCreatedTitle' }),
@@ -286,7 +318,10 @@ export default function Recharge() {
       <Modal
         title={intl.formatMessage({ id: 'billing.recharge.wxModalTitle' })}
         open={!!wxPay}
-        onCancel={() => setWxPay(null)}
+        onCancel={() => {
+          setWxPay(null);
+          setWatchOrder(null); // 关窗即停轮询
+        }}
         footer={null}
         width={420}
         destroyOnHidden

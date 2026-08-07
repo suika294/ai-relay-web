@@ -20,7 +20,7 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AuthModal from '@/components/AuthModal';
 import PublicLayout from '@/layouts/PublicLayout';
 import { billingApi } from '@/services/api';
@@ -62,6 +62,34 @@ export default function PublicRecharge() {
     if (requireLogin('redeem')) setRedeemOpen(true);
   };
 
+  // 支付宝跳走后主动轮询查单：notify_url 不可达时订单只靠回调会永远 pending。
+  // （控制台版 /console/billing/recharge 同款逻辑，那边还额外处理 return_url 回跳。）
+  const [watchOrder, setWatchOrder] = useState<string | null>(null);
+  useEffect(() => {
+    if (!watchOrder) return;
+    const startedAt = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
+        clearInterval(timer);
+        setWatchOrder(null);
+        return;
+      }
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const r = await billingApi.queryOrderStatus(watchOrder);
+        if (r.code === 0 && r.data?.status === 1) {
+          clearInterval(timer);
+          setWatchOrder(null);
+          message.success(intl.formatMessage({ id: 'billing.recharge.paySuccessToast' }));
+          orderRef.current?.reload();
+        }
+      } catch {
+        // 查单偶发失败不打断轮询，下个 tick 再试
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [watchOrder]);
+
   const handlePay = async (values: { amount: number; currency: string; method: string }) => {
     const res = await billingApi.createRecharge({
       amount: String(values.amount),
@@ -70,6 +98,7 @@ export default function PublicRecharge() {
     });
     if (res.code !== 0 || !res.data) return false;
     if (res.data.pay_url) {
+      setWatchOrder(res.data.order_no);
       window.open(res.data.pay_url, '_blank');
     } else {
       Modal.info({
