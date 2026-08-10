@@ -2174,6 +2174,23 @@ button.input-thumb.thumb-audio.playing {
   white-space: nowrap;
   pointer-events: none;
 }
+/* 视频节点的首/尾帧指派:角标本身就是按钮,点一下轮换首帧 → 尾帧 → 参考。
+   未指派(跟随「第一张=首帧」的默认)时压暗,指派过的用主色,一眼看出哪张是被钉住的。 */
+button.input-thumb-role.frame-pick {
+  border: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.55);
+  transition: background 0.14s var(--ease);
+}
+button.input-thumb-role.frame-pick:hover {
+  background: rgba(15, 23, 42, 0.9);
+}
+button.input-thumb-role.frame-pick.set {
+  background: var(--strong);
+  color: var(--strong-text);
+}
 .input-role-slot {
   flex: 0 0 52px;
   width: 52px;

@@ -400,6 +400,23 @@ function applyInputOrder<T>(items: T[], order: string[] | undefined, urlOf: (it:
   return items.map((it) => (rank.has(urlOf(it)) ? movable[k++] : it));
 }
 
+// 通用视频节点的首/尾帧指派:composer 缩略图上点角标标记,存进 data.frameRole(URL → 角色)。
+// 没标过就沿用老语义「排在第一位的图 = 首帧」,所以旧文档行为不变。
+type FrameRole = 'first' | 'last';
+const frameRolesOf = (data: any): Record<string, FrameRole> => (data?.frameRole || {}) as Record<string, FrameRole>;
+// refs 进来时已按 inputOrder 排好,这里只解析角色。
+// 指派过就严格照指派来:点哪张只改哪张,绝不给没指派的图自动补角色 —— 否则「标了尾帧,另一张
+// 莫名其妙变成首帧」。没指派过时才走老语义:单图=首帧;多图整批当参考(Seedance 等上游禁止
+// 首/尾帧与 reference images 混传,runGenerator 本来也会把 file_infos 全压成 Reference)。
+function resolveFrames(refs: string[], data: any) {
+  const roles = frameRolesOf(data);
+  const explicit = refs.some((u) => roles[u]);
+  if (explicit) {
+    return { first: refs.find((u) => roles[u] === 'first'), last: refs.find((u) => roles[u] === 'last'), explicit: true };
+  }
+  return { first: refs.length === 1 ? refs[0] : undefined, last: undefined, explicit: false };
+}
+
 // 只读取媒体 metadata，不下载完整文件。浏览器无法解析时返回 null，交给上游继续校验。
 function audioDurationSeconds(url: string): Promise<number | null> {
   return new Promise((resolve) => {
@@ -464,17 +481,25 @@ const CAPABILITIES: Capability[] = [
     params: () => VIDEO_PARAMS as ParamDef[],
     defaults: (models) => ({ model: models[0]?.value, duration: '5', resolution: '1080p', vAspect: '16:9', audioOn: 'on' }),
     onModelChange: (v) => ({ model: v }),
-    request: ({ model, prompt, refs, data }) => ({
-      transport: 'async', path: '/v1/videos/generations', pollBase: '/v1/videos/generations/',
-      body: {
-        model, prompt,
-        duration: Number(data.duration || 5), resolution: data.resolution || '1080p',
-        aspect_ratio: data.vAspect || '16:9', audio: (data.audioOn || 'on') === 'on',
-        // 通用视频节点采用首帧驱动。Seedance 禁止首/尾帧与 reference images 混传。
-        ...(refs.length ? { first_frame_image: refs[0] } : {}),
-      },
-      extract: (t) => (t?.data?.[0]?.url ? [t.data[0].url] : []),
-    }),
+    request: ({ model, prompt, refs, data }) => {
+      // 首/尾帧:composer 上点角标指派,没指派就沿用「第一张=首帧」。Seedance 禁止首/尾帧与
+      // reference images 混传,所以这里只发首尾两张,其余图交给 file_infos(见 runGenerator)。
+      const { first, last } = resolveFrames(refs, data);
+      return {
+        transport: 'async' as const, path: '/v1/videos/generations', pollBase: '/v1/videos/generations/',
+        body: {
+          model, prompt,
+          duration: Number(data.duration || 5), resolution: data.resolution || '1080p',
+          aspect_ratio: data.vAspect || '16:9', audio: (data.audioOn || 'on') === 'on',
+          ...(first ? { first_frame_image: first } : {}),
+          ...(last ? { last_frame_image: last } : {}),
+          // 多图又没指派首/尾帧:整批当 reference images 发(纯 images 不触发上游的混传限制),
+          // 别让图悄悄丢掉 —— 想要首尾帧驱动的话点角标指派即可。
+          ...(!first && !last && refs.length ? { images: refs } : {}),
+        },
+        extract: (t: any) => (t?.data?.[0]?.url ? [t.data[0].url] : []),
+      };
+    },
   },
   {
     id: 'audio', label: '音频', icon: <CustomerServiceOutlined />, output: 'audio', modelType: 'audio.speech',
@@ -1909,6 +1934,22 @@ function Composer({
     if (refRoles[imageSeq]) thumbRoles.set(it.url, refRoles[imageSeq]);
     imageSeq += 1;
   }
+  // 通用视频节点:每张图可点角标指派「首帧 / 尾帧 / 参考」。不点就是老语义 —— 第一张作首帧。
+  const framePicker = cap.id === 'video';
+  const frameRoles = frameRolesOf(d);
+  const frameImages = thumbs.filter((it) => it.kind === 'image').map((it) => it.url);
+  const resolvedFrames = resolveFrames(frameImages, d);
+  const frameLabelOf = (url: string) =>
+    url === resolvedFrames.first ? '首帧' : url === resolvedFrames.last ? '尾帧' : '参考';
+  // 点一下轮换:首帧 → 尾帧 → 参考。首/尾帧各只能有一张,抢占时把原来那张让回「参考」。
+  const cycleFrameRole = (url: string) => {
+    const next: FrameRole | undefined =
+      frameRoles[url] === 'first' ? 'last' : frameRoles[url] === 'last' ? undefined : 'first';
+    const roles: Record<string, FrameRole> = {};
+    for (const [k, v] of Object.entries(frameRoles)) if (k !== url && v !== next) roles[k] = v;
+    if (next) roles[url] = next;
+    onPatch({ frameRole: roles });
+  };
   const moveThumb = (from: number, to: number) => {
     if (from === to || from < 0 || to < 0) return;
     const urls = thumbs.map((t) => t.url);
@@ -1991,7 +2032,18 @@ function Composer({
                     {...dragProps(i)}
                   >
                     <img src={it.url} alt="" draggable={false} />
-                    {thumbRoles.get(it.url) && <span className="input-thumb-role">{thumbRoles.get(it.url)}</span>}
+                    {framePicker ? (
+                      <button
+                        type="button"
+                        className={`input-thumb-role frame-pick${frameRoles[it.url] ? ' set' : ''}`}
+                        title="点击切换这张图的用途:首帧 → 尾帧 → 参考"
+                        onClick={() => cycleFrameRole(it.url)}
+                      >
+                        {frameLabelOf(it.url)}
+                      </button>
+                    ) : thumbRoles.get(it.url) ? (
+                      <span className="input-thumb-role">{thumbRoles.get(it.url)}</span>
+                    ) : null}
                     {it.manualIndex !== undefined && (
                       <button
                         className="input-thumb-remove"
@@ -2086,6 +2138,10 @@ function Composer({
                         ? '连接/加图片作首帧(可空,纯文生视频)'
                         : '连接素材或点右侧＋加参考图')}
                 </span>
+              )}
+              {/* 有图时才提示角标怎么用 —— 空态提示上面已经占了,这条只在看得见缩略图时出现 */}
+              {framePicker && !noImageThumb && (
+                <span className="input-thumb-count">点图上角标可指定首帧 / 尾帧</span>
               )}
             </div>
             <audio ref={audioEl} style={{ display: 'none' }} onEnded={() => setPlayingAudio(null)} />
@@ -3433,10 +3489,23 @@ function CanvasInner() {
         ? applyInputOrder(fileInfosFor(anchorId), inputOrder, (i) => materialOrderKeys.get(i.Url) || i.Url)
         : [];
       if (fileInfos.length > 0) {
+        // 用户在 composer 上点过角标指派首/尾帧时,以指派为准 —— 不能再退化成纯 Reference,
+        // 否则「这张当首帧、那张当尾帧」的意图会被抹掉。图片按角色标 Usage,音视频仍是 Reference。
+        // 只有通用视频能力认这份指派;特效/多帧/模板等有自己的图序语义,别被残留的 frameRole 带偏。
+        const { first, last, explicit } = cap.id === 'video'
+          ? resolveFrames(refs, node.data)
+          : { first: undefined, last: undefined, explicit: false };
+        const thumbKey = (info: Record<string, string>) => materialOrderKeys.get(info.Url) || info.Url;
         // Seedance 等上游禁止 FirstFrame/LastFrame 与 Reference media 混用。
         // 单图保持首帧驱动；多图或带音视频时统一切到纯 Reference 模式。
         const referenceMode = fileInfos.length > 1 || fileInfos.some((info) => info.Category !== 'Image');
-        if (referenceMode) {
+        if (explicit) {
+          req.body.file_infos = fileInfos.map((info) => {
+            if (info.Category !== 'Image') return { ...info, Usage: 'Reference' };
+            const key = thumbKey(info);
+            return { ...info, Usage: key === first ? 'FirstFrame' : key === last ? 'LastFrame' : 'Reference' };
+          });
+        } else if (referenceMode) {
           req.body.file_infos = fileInfos.map((info) => ({ ...info, Usage: 'Reference' }));
           delete req.body.first_frame_image;
           delete req.body.last_frame_image;
