@@ -402,7 +402,9 @@ function applyInputOrder<T>(items: T[], order: string[] | undefined, urlOf: (it:
 
 // 通用视频节点的首/尾帧指派:composer 缩略图上点角标标记,存进 data.frameRole(URL → 角色)。
 // 没标过就沿用老语义「排在第一位的图 = 首帧」,所以旧文档行为不变。
-type FrameRole = 'first' | 'last';
+// 'ref' 是「显式指定当普通参考图」,和「没指派过」不是一回事:单图没指派时默认按首帧驱动,
+// 指成 'ref' 才能让它纯做风格参考(走 images[],不进 first_frame_image)。
+type FrameRole = 'first' | 'last' | 'ref';
 const frameRolesOf = (data: any): Record<string, FrameRole> => (data?.frameRole || {}) as Record<string, FrameRole>;
 // refs 进来时已按 inputOrder 排好,这里只解析角色。
 // 指派过就严格照指派来:点哪张只改哪张,绝不给没指派的图自动补角色 —— 否则「标了尾帧,另一张
@@ -1941,13 +1943,18 @@ function Composer({
   const resolvedFrames = resolveFrames(frameImages, d);
   const frameLabelOf = (url: string) =>
     url === resolvedFrames.first ? '首帧' : url === resolvedFrames.last ? '尾帧' : '参考';
-  // 点一下轮换:首帧 → 尾帧 → 参考。首/尾帧各只能有一张,抢占时把原来那张让回「参考」。
+  // 点一下轮换:首帧 → 尾帧 → 参考 → 首帧…… 三态都是显式的,从当前显示的角色往下推,
+  // 所以单图(默认显示首帧)点一下就能走到尾帧、再一下走到参考。首/尾帧各只能有一张,
+  // 被抢时原来那张让回参考;参考不唯一,不做抢占。
   const cycleFrameRole = (url: string) => {
-    const next: FrameRole | undefined =
-      frameRoles[url] === 'first' ? 'last' : frameRoles[url] === 'last' ? undefined : 'first';
+    const shown: FrameRole = frameRoles[url]
+      || (url === resolvedFrames.first ? 'first' : url === resolvedFrames.last ? 'last' : 'ref');
+    const next: FrameRole = shown === 'first' ? 'last' : shown === 'last' ? 'ref' : 'first';
     const roles: Record<string, FrameRole> = {};
-    for (const [k, v] of Object.entries(frameRoles)) if (k !== url && v !== next) roles[k] = v;
-    if (next) roles[url] = next;
+    for (const [k, v] of Object.entries(frameRoles)) {
+      if (k !== url && !(next !== 'ref' && v === next)) roles[k] = v;
+    }
+    roles[url] = next;
     onPatch({ frameRole: roles });
   };
   const moveThumb = (from: number, to: number) => {
@@ -2035,7 +2042,7 @@ function Composer({
                     {framePicker ? (
                       <button
                         type="button"
-                        className={`input-thumb-role frame-pick${frameRoles[it.url] ? ' set' : ''}`}
+                        className={`input-thumb-role frame-pick${it.url === resolvedFrames.first || it.url === resolvedFrames.last ? ' set' : ''}`}
                         title="点击切换这张图的用途:首帧 → 尾帧 → 参考"
                         onClick={() => cycleFrameRole(it.url)}
                       >
