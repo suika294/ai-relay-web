@@ -851,8 +851,21 @@ type Ctx = {
   startLiveness: (id: string) => void;
   openNodeCreate: (id: string, side: 'left' | 'right', anchor: HTMLElement) => void;
   selectBatch: (id: string, index: number) => void;
+  expandPromptNode: (id: string) => void;
 };
 const CanvasCtx = createContext<Ctx>({} as Ctx);
+
+// 节点内可滚动区(长文本框 / 缩略图网格 / 报错详情):内容溢出时挂上 React Flow 的 nowheel,
+// 滚轮滚内容而不是缩放画布;没溢出就不挂,滚轮照旧交给画布,不至于「滚不动也缩不了」。
+function useWheelScroll<T extends HTMLElement>(dep: unknown) {
+  const ref = useRef<T>(null);
+  const [scrollable, setScrollable] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    setScrollable(!!el && el.scrollHeight > el.clientHeight + 1);
+  }, [dep]);
+  return [ref, scrollable ? ' nowheel' : ''] as const;
+}
 
 function NodePorts({ id }: { id: string }) {
   const { openNodeCreate } = useContext(CanvasCtx);
@@ -966,6 +979,8 @@ function ImageNode({ id, data }: NodeProps) {
   const [over, setOver] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [v3dFail, setV3dFail] = useState(false);
+  const [gridRef, gridWheelCls] = useWheelScroll<HTMLDivElement>(data.images);
+  const [errRef, errWheelCls] = useWheelScroll<HTMLSpanElement>(runState[id]?.error);
   const images: string[] = data.images || [];
   const videoUrl: string | undefined = data.videoUrl;
   const audioUrl: string | undefined = data.audioUrl;
@@ -1073,7 +1088,7 @@ function ImageNode({ id, data }: NodeProps) {
             <img src={images[0]} alt="" />
           </div>
         ) : (
-          <div className="thumb-grid nodrag">
+          <div className={`thumb-grid nodrag${gridWheelCls}`} ref={gridRef}>
             {images.map((u, i) => (
               <div className="thumb-item" key={i}>
                 <img src={u} alt="" />
@@ -1089,7 +1104,7 @@ function ImageNode({ id, data }: NodeProps) {
             <span className="node-error-title">
               <CloseCircleOutlined /> 生成失败
             </span>
-            <span className="node-error-msg">{run.error || '未知错误'}</span>
+            <span className={`node-error-msg${errWheelCls}`} ref={errRef}>{run.error || '未知错误'}</span>
             <button className="node-error-copy" onClick={() => copyText(run.error || '')}>
               复制报错
             </button>
@@ -1202,17 +1217,19 @@ function ImageNode({ id, data }: NodeProps) {
 
 // ============ 提示词节点(可选 LLM 变换:文本→文本,喂给下游生成节点) ============
 function PromptNode({ id, data }: NodeProps) {
-  const { updateNodeData, deleteNode, chatModels, runLLM, runState } = useContext(CanvasCtx);
+  const { updateNodeData, deleteNode, chatModels, runLLM, runState, expandPromptNode } = useContext(CanvasCtx);
   const running = runState[id]?.status === 'running';
   const failed = runState[id]?.status === 'failed';
   const model = data.chatModel || chatModels[0]?.value;
   const mode = data.llmMode || 'expand';
+  const [textRef, wheelCls] = useWheelScroll<HTMLTextAreaElement>(data.text);
   return (
     <div className="sc-node sc-prompt">
       <NodePorts id={id} />
       <div className="prompt-node-card">
         <textarea
-          className="prompt-node-text nodrag"
+          ref={textRef}
+          className={`prompt-node-text nodrag${wheelCls}`}
           value={data.text || ''}
           onChange={(e) => updateNodeData(id, { text: e.target.value })}
           placeholder="提示词…(连到图片节点上游作 prompt;也可用下方 AI 扩写/精炼)"
@@ -1256,6 +1273,9 @@ function PromptNode({ id, data }: NodeProps) {
           >
             <ThunderboltOutlined />
             {running ? '处理中' : 'AI'}
+          </button>
+          <button className="pn-expand" type="button" title="展开成大窗口编辑" onClick={() => expandPromptNode(id)}>
+            <FullscreenOutlined />
           </button>
         </div>
         {failed && <div className="pn-error nodrag">{runState[id]?.error || 'LLM 处理失败'}</div>}
@@ -1388,6 +1408,7 @@ function LiveNode({ id, data }: NodeProps) {
   const { updateNodeData, deleteNode, openLive, liveVoices } = useContext(CanvasCtx);
   const sysVoices = liveVoices.filter((v) => v.system !== false);
   const customVoices = liveVoices.filter((v) => v.system === false);
+  const [personaRef, personaWheelCls] = useWheelScroll<HTMLTextAreaElement>(data.persona);
   return (
     <div className="sc-node sc-live">
       <NodePorts id={id} />
@@ -1423,7 +1444,8 @@ function LiveNode({ id, data }: NodeProps) {
           ))}
         </select>
         <textarea
-          className="live-persona"
+          ref={personaRef}
+          className={`live-persona${personaWheelCls}`}
           value={data.persona || ''}
           onChange={(e) => updateNodeData(id, { persona: e.target.value })}
           placeholder="人设(可空,也可连上游提示词节点)…"
@@ -2330,6 +2352,55 @@ function PromptModal({
   );
 }
 
+// ============ 提示词节点的展开大窗(纯文本,不带 @素材;节点小框写长文太挤) ============
+function PromptNodeModal({ text, onChange, onClose }: { text: string; onChange: (v: string) => void; onClose: () => void }) {
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!area) return;
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="prompt-modal" onMouseDown={onClose}>
+      <div className="prompt-modal-card" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="prompt-modal-head">
+          <span className="prompt-modal-title">提示词节点</span>
+          <span className="prompt-modal-count">{text.length} 字</span>
+          <button className="prompt-modal-close" type="button" title="收起 (Esc)" onClick={onClose}>
+            <FullscreenExitOutlined />
+          </button>
+        </div>
+        <div className="prompt-modal-body">
+          <textarea
+            ref={areaRef}
+            className="prompt-modal-input"
+            value={text}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="提示词…(连到图片节点上游作 prompt;也可用节点上的 AI 扩写/精炼)"
+          />
+        </div>
+        <div className="prompt-modal-foot">
+          <span>编辑实时保存 · 可在节点上用 AI 扩写/精炼</span>
+          <button className="prompt-modal-done" type="button" onClick={onClose}>
+            完成
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type DocMeta = { id: number; title: string; icon: string };
 type MenuState = {
   x: number;
@@ -2366,6 +2437,7 @@ function CanvasInner() {
   const [preview, setPreview] = useState<{ images: string[]; index: number } | null>(null);
   // 记节点 id 而不是布尔:切走选中节点时大窗自动关掉,不会串到别的节点上
   const [promptExpanded, setPromptExpanded] = useState<string | null>(null);
+  const [promptNodeExpanded, setPromptNodeExpanded] = useState<string | null>(null); // 提示词节点的大窗
   const [liveSeed, setLiveSeed] = useState<DhLiveSeed | null>(null);
   const [liveVoices, setLiveVoices] = useState<LiveVoice[]>([]);
   const [loadTick, setLoadTick] = useState(0); // 文档载入完成计数,触发续轮询扫描
@@ -3907,6 +3979,7 @@ function CanvasInner() {
         runState, chatModels: modelsByType.chat || [], liveVoices, updateNodeData, selectNode, deleteNode, uploadAsset, openPreview,
         downloadMedia, convertToMaterial,
         runLLM, runClone, openLive, runMaterial, startLiveness, openNodeCreate, selectBatch,
+        expandPromptNode: setPromptNodeExpanded,
       }}
     >
       <div className="cs-root" ref={rootRef}>
@@ -4199,6 +4272,19 @@ function CanvasInner() {
             onClose={() => setPromptExpanded(null)}
           />
         )}
+
+        {(() => {
+          // 提示词节点大窗:节点被删/切走时自动失效,不串到别的节点
+          const pn = promptNodeExpanded ? nodes.find((n) => n.id === promptNodeExpanded && n.type === 'prompt') : null;
+          if (!pn) return null;
+          return (
+            <PromptNodeModal
+              text={String(pn.data?.text || '')}
+              onChange={(v) => updateNodeData(pn.id, { text: v })}
+              onClose={() => setPromptNodeExpanded(null)}
+            />
+          );
+        })()}
 
         {preview && (
           <div className="cs-lightbox" onMouseDown={() => setPreview(null)}>

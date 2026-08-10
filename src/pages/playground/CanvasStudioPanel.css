@@ -433,8 +433,9 @@
   box-shadow: 0 5px 14px rgba(15, 23, 42, 0.16);
   cursor: pointer;
 }
-.cs-root .react-flow__handle-left.node-combined-port { left: -14px; }
-.cs-root .react-flow__handle-right.node-combined-port { right: -14px; }
+/* 加号端口整体移到节点外:原来压在卡片内 12px,会盖住文本框滚动条 */
+.cs-root .react-flow__handle-left.node-combined-port { left: -29px; }
+.cs-root .react-flow__handle-right.node-combined-port { right: -29px; }
 .cs-root .react-flow__handle.node-combined-port .anticon { font-size: 11px; pointer-events: none; }
 .cs-root .react-flow__handle.node-combined-port:hover {
   background: var(--strong);
@@ -1208,11 +1209,19 @@
   flex-direction: column;
   gap: 7px;
 }
+/* 提示词节点:操作钮(展开/删除)提到卡片外上方,别压住文本框右上角与滚动条;
+   padding-bottom 做 hover 桥接,鼠标从卡片挪到按钮不会因离开卡片而消失 */
+.sc-prompt .floating-node-actions {
+  top: -34px;
+  right: 2px;
+  padding-bottom: 10px;
+}
 .prompt-node-text {
   width: 100%;
   min-height: 84px;
   resize: none;
   overflow: auto;
+  scrollbar-width: thin;
   white-space: pre-wrap;
   border: 1px solid rgba(148, 163, 184, 0.32);
   border-radius: 13px;
@@ -1231,6 +1240,23 @@
 }
 .prompt-node-text::placeholder {
   color: var(--faint);
+}
+/* 常驻可见的细滚动条:长提示词时能直接拖,不用等系统 overlay 条淡入 */
+.prompt-node-text::-webkit-scrollbar {
+  width: 8px;
+}
+.prompt-node-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+.prompt-node-text::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.prompt-node-text:hover::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.55);
+  background-clip: content-box;
 }
 /* 提示词节点的 LLM 工具条(模型 / 变换方式 / 运行) */
 .prompt-node-tools {
@@ -1281,6 +1307,28 @@
 }
 .pn-run .anticon {
   font-size: 11px;
+}
+/* 展开大窗:常驻在工具条上,长提示词不用在小框里挤着看 */
+.pn-expand {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.14s var(--ease);
+}
+.pn-expand:hover {
+  color: var(--text);
+  border-color: var(--strong);
+  background: var(--card);
 }
 .pn-error {
   font-size: 10px;
