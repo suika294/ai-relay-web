@@ -9,6 +9,8 @@ export default {
   "pricing.details": "详情",
   "pricing.maxContext": "最大上下文",
   "pricing.priceLabel": "计费单价 (百万输入/输出)",
+  "pricing.offPeakPrice": "空闲时段单价",
+  "pricing.timeWindowHint": "该模型分时段计价:北京时间 {windows} 为高峰时段,按上方单价计费;其余时间为空闲时段,享空闲单价。",
   "pricing.cardDesc": "{provider} 模型，支持通过 OpenAI 兼容接口接入，适用于生产工作流与快速原型验证。",
   "pricing.bookmarkAria": "收藏模型",
   "pricing.loadMore": "加载更多模型",

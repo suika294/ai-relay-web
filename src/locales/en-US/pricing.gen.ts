@@ -9,6 +9,8 @@ export default {
   "pricing.details": "Details",
   "pricing.maxContext": "Max Context",
   "pricing.priceLabel": "Price (per 1M input/output)",
+  "pricing.offPeakPrice": "Off-peak price",
+  "pricing.timeWindowHint": "Time-based pricing: {windows} Beijing time is peak hours, billed at the rate above. All other hours are off-peak and billed at the off-peak rate.",
   "pricing.cardDesc": "{provider} model, accessible via an OpenAI-compatible API, ideal for production workflows and rapid prototyping.",
   "pricing.bookmarkAria": "Bookmark model",
   "pricing.loadMore": "Load More Models",

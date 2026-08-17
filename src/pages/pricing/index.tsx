@@ -72,6 +72,32 @@ const fmtMoney = (v?: string) => {
   return `$${n.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
 };
 
+// 分时段定价(DeepSeek V4 起):顶层 input_price / output_price 是**高峰价**,
+// 空闲价存在 pricing.schedule.off_peak 里,只在这里展示 —— 卡片主价保持展示高峰价,
+// 用户实付永远 ≤ 展示价。没配 schedule 的模型完全不渲染这一行。
+type PricingSchedule = {
+  tz?: string;
+  peak_windows?: { from?: string; to?: string }[];
+  off_peak?: { input_per_1m?: number | string; output_per_1m?: number | string };
+};
+
+const offPeakInfo = (m: API.PublicModel) => {
+  const sc = (m as { pricing?: { schedule?: PricingSchedule } }).pricing?.schedule;
+  const off = sc?.off_peak;
+  const windows = sc?.peak_windows ?? [];
+  if (!off || windows.length === 0) return null;
+  // off_peak 允许只覆盖部分字段,未覆盖的回落顶层价(与后端 computePerToken 一致)
+  const input = off.input_per_1m ?? m.input_price;
+  const output = off.output_per_1m ?? m.output_price;
+  return {
+    price: `${fmtMoney(String(input))} / ${fmtMoney(String(output))}`,
+    windows: windows
+      .filter((w) => w.from && w.to)
+      .map((w) => `${w.from}-${w.to}`)
+      .join('、'),
+  };
+};
+
 const modelVersion = (name: string) => {
   const parts = name.split('/');
   const last = parts[parts.length - 1] || name;
@@ -219,6 +245,7 @@ function PricingContent() {
                 ? intl.formatMessage({ id: meta.labelKey })
                 : m.type || intl.formatMessage({ id: 'pricing.modelFallback' });
               const provider = providerLabel[m.provider_type] ?? m.provider_type;
+              const offPeak = offPeakInfo(m);
               return (
                 <article className="market-card" key={m.id}>
                   <div className="market-card-head">
@@ -267,7 +294,22 @@ function PricingContent() {
                         {fmtMoney(m.input_price)} / {fmtMoney(m.output_price)}
                       </strong>
                     </div>
+                    {offPeak && (
+                      <div>
+                        <span>{intl.formatMessage({ id: 'pricing.offPeakPrice' })}</span>
+                        <strong>{offPeak.price}</strong>
+                      </div>
+                    )}
                   </div>
+
+                  {offPeak && (
+                    <p className="market-card-desc">
+                      {intl.formatMessage(
+                        { id: 'pricing.timeWindowHint' },
+                        { windows: offPeak.windows },
+                      )}
+                    </p>
+                  )}
 
                   <div className="market-card-actions">
                     <Button type="primary" onClick={handleUse}>
